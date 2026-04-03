@@ -374,13 +374,13 @@ export const seedDatabase = async () => {
        SELECT t.id, u.id, c.id, NOW() - INTERVAL '4 days 2 hours', NOW() - INTERVAL '4 days 1 hour', s.score, s.total_score, s.percentage, 'graded'
        FROM tests t
        JOIN classes c ON c.id = t.class_id
-       JOIN users u ON u.email = s.email
-       JOIN (
+       CROSS JOIN (
          VALUES
            ('student1@demo.com', 2, 3, 66.67),
            ('student3@demo.com', 1, 3, 33.33),
            ('student4@demo.com', 3, 3, 100)
        ) AS s(email, score, total_score, percentage)
+       JOIN users u ON u.email = s.email
        WHERE t.title = 'Science Concepts Review'
        ON CONFLICT (test_id, student_id)
        DO UPDATE SET
