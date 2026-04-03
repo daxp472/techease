@@ -14,11 +14,24 @@ interface TestRow {
   id: number;
   title: string;
   description?: string;
+  instructions?: string;
   status: 'draft' | 'scheduled' | 'active' | 'completed' | 'archived';
   start_time?: string;
   end_time?: string;
   total_questions?: number;
   subject_name?: string;
+  subjectName?: string;
+  subjectCode?: string;
+  className?: string;
+  classGrade?: string;
+  classSection?: string;
+  teacherFirstName?: string;
+  teacherLastName?: string;
+  test_type?: string;
+  show_answers?: boolean;
+  shuffle_questions?: boolean;
+  duration_minutes?: number;
+  passing_score?: number;
 }
 
 interface DraftOption {
@@ -52,6 +65,41 @@ const emptyQuestion = (questionNumber: number): DraftQuestion => ({
   ]
 });
 
+const normalizeQuestion = (question: any) => ({
+  id: Number(question.id),
+  questionNumber: Number(question.questionNumber ?? question.question_number ?? question.question_no ?? 0),
+  questionText: question.questionText ?? question.question_text ?? '',
+  questionType: question.questionType ?? question.question_type ?? 'mcq',
+  correctAnswer: question.correctAnswer ?? question.correct_answer ?? '',
+  points: Number(question.points ?? 1),
+  difficulty: question.difficulty ?? 'medium',
+  options: Array.isArray(question.options)
+    ? question.options
+        .filter((option: any) => option && (option.id ?? option.optionNumber ?? option.option_number))
+        .map((option: any) => ({
+          id: option.id,
+          optionNumber: option.optionNumber ?? option.option_number,
+          optionText: option.optionText ?? option.option_text ?? '',
+          isCorrect: Boolean(option.isCorrect ?? option.is_correct)
+        }))
+    : []
+});
+
+const normalizeTestDetails = (test: any) => ({
+  ...test,
+  className: test.className ?? test.class_name ?? '',
+  classGrade: test.classGrade ?? test.class_grade ?? '',
+  classSection: test.classSection ?? test.class_section ?? '',
+  subjectName: test.subjectName ?? test.subject_name ?? '',
+  subjectCode: test.subjectCode ?? test.subject_code ?? '',
+  teacherFirstName: test.teacherFirstName ?? test.teacher_first_name ?? '',
+  teacherLastName: test.teacherLastName ?? test.teacher_last_name ?? '',
+  duration_minutes: test.duration_minutes ?? test.durationMinutes ?? null,
+  passing_score: test.passing_score ?? test.passingScore ?? null,
+  instructions: test.instructions ?? '',
+  questions: Array.isArray(test.questions) ? test.questions.map(normalizeQuestion) : []
+});
+
 const Tests: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
@@ -61,9 +109,12 @@ const Tests: React.FC = () => {
   const [topics, setTopics] = useState<Array<{ id: number; title: string }>>([]);
   const [tests, setTests] = useState<TestRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [showAiCreate, setShowAiCreate] = useState(false);
+  const [selectedTest, setSelectedTest] = useState<any | null>(null);
+  const [aiSource, setAiSource] = useState<'topic' | 'pdf'>('topic');
   const [pdfFileName, setPdfFileName] = useState('');
   const [pdfFileData, setPdfFileData] = useState('');
   const [form, setForm] = useState({
@@ -79,8 +130,9 @@ const Tests: React.FC = () => {
     classId: '',
     subjectId: '',
     topicId: '',
+    chapterTitle: '',
+    includePreviousTopics: true,
     title: '',
-    pdfUrl: '',
     numQuestions: 10,
     difficulty: 'medium'
   });
@@ -125,14 +177,10 @@ const Tests: React.FC = () => {
 
   useEffect(() => {
     const loadTests = async () => {
-      if (!selectedClass) {
-        setTests([]);
-        setLoading(false);
-        return;
-      }
       setLoading(true);
       try {
-        const res = await testAPI.getByClass({ classId: Number(selectedClass) });
+        const params = selectedClass ? { classId: Number(selectedClass) } : {};
+        const res = await testAPI.getByClass(params);
         setTests(res.data.tests || []);
       } catch {
         showToast('Unable to load tests', 'error');
@@ -145,8 +193,18 @@ const Tests: React.FC = () => {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return tests;
-    return tests.filter((t) => (`${t.title} ${t.subject_name || ''} ${t.status}`).toLowerCase().includes(q));
+    const statusPriority: Record<string, number> = { active: 0, scheduled: 1, completed: 2, archived: 3, draft: 4 };
+    const source = q
+      ? tests.filter((t) => (`${t.title} ${t.subject_name || ''} ${t.status}`).toLowerCase().includes(q))
+      : tests;
+
+    return source.slice().sort((a, b) => {
+      const byStatus = (statusPriority[a.status] ?? 99) - (statusPriority[b.status] ?? 99);
+      if (byStatus !== 0) return byStatus;
+      const aStart = a.start_time ? new Date(a.start_time).getTime() : 0;
+      const bStart = b.start_time ? new Date(b.start_time).getTime() : 0;
+      return bStart - aStart;
+    });
   }, [search, tests]);
 
   const updateDraftQuestion = (index: number, patch: Partial<DraftQuestion>) => {
@@ -233,26 +291,49 @@ const Tests: React.FC = () => {
   };
 
   const createAiTest = async () => {
-    if (!aiForm.classId || !aiForm.subjectId || !aiForm.title || !pdfFileData) {
-      showToast('Please fill required AI test fields and upload notes/PDF', 'error');
+    if (!aiForm.classId || !aiForm.subjectId || !aiForm.title) {
+      showToast('Please select class, subject, and title', 'error');
+      return;
+    }
+
+    if (aiSource === 'pdf' && !pdfFileData) {
+      showToast('Please upload PDF notes for PDF-based quiz generation', 'error');
+      return;
+    }
+
+    if (aiSource === 'topic' && !aiForm.topicId && !aiForm.chapterTitle.trim()) {
+      showToast('Please select a syllabus topic or enter chapter title', 'error');
       return;
     }
 
     try {
-      await testAPI.generateFromPDF({
+      await testAPI.generateQuiz({
         classId: Number(aiForm.classId),
         subjectId: Number(aiForm.subjectId),
         syllabusTopicId: aiForm.topicId ? Number(aiForm.topicId) : null,
+        chapterTitle: aiForm.chapterTitle || null,
+        includeCoveredTopics: aiForm.includePreviousTopics,
+        sourceType: aiSource,
         title: aiForm.title,
-        pdfUrl: pdfFileData,
+        pdfUrl: aiSource === 'pdf' ? pdfFileData : null,
         pdfFileName,
         numQuestions: Number(aiForm.numQuestions),
         difficulty: aiForm.difficulty,
         questionTypes: ['mcq', 'short_answer']
       });
-      showToast('AI quiz generated and scheduled', 'success');
+      showToast('AI quiz generated successfully', 'success');
       setShowAiCreate(false);
-      setAiForm({ classId: '', subjectId: '', topicId: '', title: '', pdfUrl: '', numQuestions: 10, difficulty: 'medium' });
+      setAiSource('topic');
+      setAiForm({
+        classId: '',
+        subjectId: '',
+        topicId: '',
+        chapterTitle: '',
+        includePreviousTopics: true,
+        title: '',
+        numQuestions: 10,
+        difficulty: 'medium'
+      });
       setPdfFileName('');
       setPdfFileData('');
       if (selectedClass) {
@@ -280,6 +361,18 @@ const Tests: React.FC = () => {
     const end = test.end_time ? new Date(test.end_time).getTime() : null;
     if (!start || !end) return test.status === 'active';
     return now >= start && now <= end;
+  };
+
+  const openTestDetails = async (testId: number) => {
+    setDetailLoading(true);
+    try {
+      const response = await testAPI.getById(testId);
+      setSelectedTest(normalizeTestDetails(response.data.test));
+    } catch {
+      showToast('Unable to load test details', 'error');
+    } finally {
+      setDetailLoading(false);
+    }
   };
 
   return (
@@ -310,17 +403,20 @@ const Tests: React.FC = () => {
 
         {loading ? (
           <LoadingState message="Loading tests..." />
-        ) : !selectedClass ? (
-          <EmptyState title="Select a class" description="Choose a class to load tests and quizzes." />
         ) : filtered.length === 0 ? (
-          <EmptyState title="No tests yet" description="Create a manual test or generate one from uploaded notes." />
+          <EmptyState title="No tests found" description="Try changing class filter or create a new test." />
         ) : (
           <div className="space-y-3">
             {filtered.map((test) => (
-              <div key={test.id} className="card flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between">
+              <button
+                key={test.id}
+                type="button"
+                onClick={() => void openTestDetails(test.id)}
+                className="card flex w-full flex-col gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg md:flex-row md:items-center md:justify-between"
+              >
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{test.title}</h3>
-                  <p className="text-sm text-slate-600">{test.subject_name || 'Subject'} • {test.total_questions || 0} questions</p>
+                  <p className="text-sm text-slate-600">{test.subject_name || test.subjectName || 'Subject'} • {test.total_questions || 0} questions</p>
                   {test.start_time ? (
                     <p className="mt-1 text-xs text-slate-500">
                       Window: {new Date(test.start_time).toLocaleString()} - {test.end_time ? new Date(test.end_time).toLocaleString() : 'No end'}
@@ -333,8 +429,125 @@ const Tests: React.FC = () => {
                     <Link to={`/student/tests/${test.id}/attempt`} className="btn-primary">Start Test</Link>
                   ) : null}
                 </div>
-              </div>
+              </button>
             ))}
+          </div>
+        )}
+
+        {selectedTest && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+            <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+              {detailLoading ? (
+                <LoadingState compact message="Loading test details..." />
+              ) : (
+                <>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Test Details</p>
+                      <h2 className="mt-1 text-2xl font-bold text-slate-900">{selectedTest.title}</h2>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {selectedTest.subjectName || selectedTest.subject_name || 'Subject'}
+                        {selectedTest.subjectCode ? ` • ${selectedTest.subjectCode}` : ''}
+                      </p>
+                    </div>
+                    <button type="button" className="btn-secondary" onClick={() => setSelectedTest(null)}>
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Class</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {selectedTest.className || 'Unknown'}
+                        {selectedTest.classGrade ? ` - Grade ${selectedTest.classGrade}` : ''}
+                        {selectedTest.classSection ? ` ${selectedTest.classSection}` : ''}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Teacher</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {selectedTest.teacherFirstName || ''} {selectedTest.teacherLastName || ''}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Status</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900 capitalize">{selectedTest.status}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Questions</p>
+                      <p className="mt-1 text-2xl font-bold text-slate-900">{selectedTest.total_questions || selectedTest.questions?.length || 0}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Duration</p>
+                      <p className="mt-1 text-2xl font-bold text-slate-900">{selectedTest.duration_minutes || '-'} min</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Passing Score</p>
+                      <p className="mt-1 text-2xl font-bold text-slate-900">{selectedTest.passing_score ?? '-'}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 rounded-2xl bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-700">Description</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{selectedTest.description || 'No description provided.'}</p>
+                  </div>
+
+                  {selectedTest.instructions ? (
+                    <div className="mt-4 rounded-2xl bg-teal-50 p-4">
+                      <p className="text-sm font-semibold text-teal-800">Instructions</p>
+                      <p className="mt-2 text-sm leading-6 text-teal-900">{selectedTest.instructions}</p>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-6">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-slate-900">Questions Preview</h3>
+                      {user?.role === 'student' && canTakeTestNow(selectedTest) ? (
+                        <Link to={`/student/tests/${selectedTest.id}/attempt`} className="btn-primary" onClick={(event) => event.stopPropagation()}>
+                          Start Test
+                        </Link>
+                      ) : null}
+                    </div>
+                    <div className="space-y-3">
+                      {(selectedTest.questions || []).map((question: any) => (
+                        <div key={question.id} className="rounded-2xl border border-slate-200 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Question {question.questionNumber}</p>
+                              <p className="mt-1 text-sm leading-6 text-slate-900">{question.questionText}</p>
+                            </div>
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold capitalize text-slate-700">{question.questionType}</span>
+                          </div>
+
+                          {Array.isArray(question.options) && question.options.length > 0 ? (
+                            <div className="mt-3 grid gap-2 md:grid-cols-2">
+                              {question.options.map((option: any) => (
+                                <div key={option.id || option.optionNumber} className={`rounded-xl border px-3 py-2 text-sm ${option.isCorrect ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-700'}`}>
+                                  {option.optionNumber ? `${option.optionNumber}. ` : ''}{option.optionText}
+                                  {user?.role !== 'student' && option.isCorrect ? ' • Correct' : ''}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {question.questionType !== 'mcq' && question.correctAnswer && user?.role !== 'student' ? (
+                            <p className="mt-3 text-sm font-medium text-emerald-700">Expected answer: {question.correctAnswer}</p>
+                          ) : null}
+
+                          {question.questionType === 'mcq' && question.correctAnswer && user?.role !== 'student' ? (
+                            <p className="mt-3 text-sm font-medium text-emerald-700">Correct option: {question.correctAnswer}</p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -425,8 +638,30 @@ const Tests: React.FC = () => {
         {showAiCreate && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6">
-              <h2 className="mb-4 text-xl font-semibold text-slate-900">Generate Quiz from PDF/Notes</h2>
+              <h2 className="mb-2 text-xl font-semibold text-slate-900">Generate Quiz</h2>
+              <p className="mb-4 text-sm text-slate-600">Choose AI source: syllabus topic/chapter context or uploaded PDF notes.</p>
+
+              <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-2">
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm">
+                  <input
+                    type="radio"
+                    checked={aiSource === 'topic'}
+                    onChange={() => setAiSource('topic')}
+                  />
+                  Generate from Topic/Chapter (AI)
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm">
+                  <input
+                    type="radio"
+                    checked={aiSource === 'pdf'}
+                    onChange={() => setAiSource('pdf')}
+                  />
+                  Generate from Uploaded PDF
+                </label>
+              </div>
+
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label className="text-sm text-slate-600 md:col-span-2">Standard/Class</label>
                 <select className="input-base" value={aiForm.classId} onChange={(e) => setAiForm({ ...aiForm, classId: e.target.value, topicId: '' })}>
                   <option value="">Class</option>
                   {classes.map((cls) => (
@@ -439,20 +674,46 @@ const Tests: React.FC = () => {
                     <option key={subject.id} value={subject.id}>{subject.name} ({subject.code})</option>
                   ))}
                 </select>
-                <select className="input-base md:col-span-2" value={aiForm.topicId} onChange={(e) => setAiForm({ ...aiForm, topicId: e.target.value })} disabled={!topics.length}>
-                  <option value="">Select topic (optional)</option>
-                  {topics.map((topic) => (
-                    <option key={topic.id} value={topic.id}>{topic.title}</option>
-                  ))}
-                </select>
+
+                {aiSource === 'topic' && (
+                  <>
+                    <select className="input-base md:col-span-2" value={aiForm.topicId} onChange={(e) => setAiForm({ ...aiForm, topicId: e.target.value })} disabled={!topics.length}>
+                      <option value="">Select topic</option>
+                      {topics.map((topic) => (
+                        <option key={topic.id} value={topic.id}>{topic.title}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="input-base md:col-span-2"
+                      placeholder="Or type chapter name (e.g., Chapter 3: Trigonometry)"
+                      value={aiForm.chapterTitle}
+                      onChange={(e) => setAiForm({ ...aiForm, chapterTitle: e.target.value })}
+                    />
+                    <label className="md:col-span-2 flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={aiForm.includePreviousTopics}
+                        onChange={(e) => setAiForm({ ...aiForm, includePreviousTopics: e.target.checked })}
+                      />
+                      Include previous covered topics for better chapter context
+                    </label>
+                  </>
+                )}
+
                 <input className="input-base md:col-span-2" placeholder="Quiz title" value={aiForm.title} onChange={(e) => setAiForm({ ...aiForm, title: e.target.value })} />
-                <input
-                  className="input-base md:col-span-2"
-                  type="file"
-                  accept="application/pdf"
-                  onChange={(event) => void handlePdfUpload(event.target.files?.[0] || null)}
-                />
-                {pdfFileName ? <p className="md:col-span-2 text-sm text-slate-600">Selected file: {pdfFileName}</p> : null}
+
+                {aiSource === 'pdf' && (
+                  <>
+                    <input
+                      className="input-base md:col-span-2"
+                      type="file"
+                      accept="application/pdf"
+                      onChange={(event) => void handlePdfUpload(event.target.files?.[0] || null)}
+                    />
+                    {pdfFileName ? <p className="md:col-span-2 text-sm text-slate-600">Selected file: {pdfFileName}</p> : null}
+                  </>
+                )}
+
                 <input className="input-base" type="number" min={5} max={50} placeholder="Number of questions" value={aiForm.numQuestions} onChange={(e) => setAiForm({ ...aiForm, numQuestions: Number(e.target.value) })} />
                 <select className="input-base" value={aiForm.difficulty} onChange={(e) => setAiForm({ ...aiForm, difficulty: e.target.value })}>
                   <option value="easy">Easy</option>

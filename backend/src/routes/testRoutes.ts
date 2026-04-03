@@ -5,7 +5,9 @@ import {
   getTest,
   publishTest,
   getClassTests,
+  saveTestProgress,
   submitTestAnswers,
+  getStudentTestProgress,
   getStudentTestResults,
   getTestAnalytics,
   generateQuizFromPDF
@@ -20,6 +22,8 @@ router.post('/:testId/questions', authenticate, authorize('teacher', 'admin'), a
 router.put('/:testId/publish', authenticate, authorize('teacher', 'admin'), publishTest);
 router.get('/class', authenticate, getClassTests);
 router.get('/:testId', authenticate, getTest);
+router.get('/:testId/progress', authenticate, authorize('student'), getStudentTestProgress);
+router.post('/:testId/save', authenticate, authorize('student'), saveTestProgress);
 router.post('/:testId/submit', authenticate, authorize('student'), submitTestAnswers);
 router.get('/:testId/results', authenticate, authorize('student', 'teacher', 'admin'), getStudentTestResults);
 router.get('/:testId/analytics', authenticate, authorize('teacher', 'admin'), getTestAnalytics);

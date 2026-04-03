@@ -2,6 +2,13 @@ import { Request, Response } from 'express';
 import pool from '../config/database';
 import { extractTextFromPDF, generateQuizFromContent } from '../services/geminiService';
 
+const normalizeAnswerValue = (answer: any): string => {
+  if (answer === null || answer === undefined) {
+    return '';
+  }
+  return String(answer).trim();
+};
+
 // Create new test
 export const createTest = async (req: Request, res: Response) => {
   try {
@@ -117,16 +124,48 @@ export const getTest = async (req: Request, res: Response) => {
     const { testId } = req.params;
     const role = (req as any).user?.role;
 
-    const testResult = await pool.query('SELECT * FROM tests WHERE id = $1', [parseInt(testId)]);
+    const testResult = await pool.query(
+      `SELECT t.*,
+              c.name as "className",
+              c.grade as "classGrade",
+              c.section as "classSection",
+              s.name as "subjectName",
+              s.code as "subjectCode",
+              u.first_name as "teacherFirstName",
+              u.last_name as "teacherLastName"
+       FROM tests t
+       LEFT JOIN classes c ON t.class_id = c.id
+       LEFT JOIN subjects s ON t.subject_id = s.id
+       LEFT JOIN users u ON t.teacher_id = u.id
+       WHERE t.id = $1`,
+      [parseInt(testId)]
+    );
 
     if (testResult.rows.length === 0) {
       return res.status(404).json({ message: 'Test not found' });
     }
 
     const questionsResult = await pool.query(
-      `SELECT tq.*, 
-              array_agg(json_build_object('id', qo.id, 'optionNumber', qo.option_number, 'optionText', qo.option_text, 'isCorrect', qo.is_correct) 
-               ORDER BY qo.option_number) as options
+      `SELECT tq.id,
+              tq.test_id as "testId",
+              tq.question_number as "questionNumber",
+              tq.question_text as "questionText",
+              tq.question_type as "questionType",
+              tq.correct_answer as "correctAnswer",
+              tq.points,
+              tq.difficulty,
+              COALESCE(
+                json_agg(
+                  json_build_object(
+                    'id', qo.id,
+                    'optionNumber', qo.option_number,
+                    'optionText', qo.option_text,
+                    'isCorrect', qo.is_correct
+                  )
+                  ORDER BY qo.option_number
+                ) FILTER (WHERE qo.id IS NOT NULL),
+                '[]'::json
+              ) as options
        FROM test_questions tq
        LEFT JOIN question_options qo ON tq.id = qo.question_id
        WHERE tq.test_id = $1
@@ -140,15 +179,18 @@ export const getTest = async (req: Request, res: Response) => {
 
     test.questions = questions.map((question: any) => {
       if (role === 'student') {
+        const filteredOptions = Array.isArray(question.options)
+          ? question.options.filter((option: any) => option && option.id)
+          : [];
+
         return {
           ...question,
+          correctAnswer: undefined,
           correct_answer: undefined,
-          options: Array.isArray(question.options)
-            ? question.options.map((option: any) => ({
-                ...option,
-                isCorrect: undefined
-              }))
-            : []
+          options: filteredOptions.map((option: any) => ({
+            ...option,
+            isCorrect: undefined
+          }))
         };
       }
 
@@ -198,15 +240,47 @@ export const publishTest = async (req: Request, res: Response) => {
 export const getClassTests = async (req: Request, res: Response) => {
   try {
     const { classId } = req.query;
+    const userId = (req as any).user?.id;
+    const userRole = (req as any).user?.role;
 
-    const result = await pool.query(
-      `SELECT t.*, s.name as subject_name
-       FROM tests t
-       JOIN subjects s ON t.subject_id = s.id
-       WHERE t.class_id = $1 AND t.status IN ('scheduled', 'active', 'completed')
-       ORDER BY t.start_time DESC`,
-      [parseInt(classId as string)]
-    );
+    let queryText = `
+      SELECT t.*, s.name as subject_name
+      FROM tests t
+      JOIN subjects s ON t.subject_id = s.id
+      WHERE t.status IN ('scheduled', 'active', 'completed')
+    `;
+    const params: any[] = [];
+
+    if (classId) {
+      params.push(parseInt(classId as string));
+      queryText += ` AND t.class_id = $${params.length}`;
+    } else if (userRole === 'student') {
+      params.push(userId);
+      queryText += `
+        AND t.class_id IN (
+          SELECT e.class_id
+          FROM enrollments e
+          WHERE e.student_id = $${params.length} AND e.status = 'active'
+        )
+      `;
+    } else if (userRole === 'teacher') {
+      params.push(userId);
+      queryText += ` AND t.teacher_id = $${params.length}`;
+    }
+
+    queryText += `
+      ORDER BY
+        CASE t.status
+          WHEN 'active' THEN 0
+          WHEN 'scheduled' THEN 1
+          WHEN 'completed' THEN 2
+          ELSE 3
+        END,
+        t.start_time DESC NULLS LAST,
+        t.created_at DESC
+    `;
+
+    const result = await pool.query(queryText, params);
 
     res.json({ tests: result.rows });
   } catch (error) {
@@ -226,21 +300,52 @@ export const submitTestAnswers = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    // Create submission
-    const submissionResult = await pool.query(
-      `INSERT INTO test_submissions (test_id, student_id, class_id, submitted_at, status)
-       SELECT $1, $2, class_id, CURRENT_TIMESTAMP, 'submitted'
-       FROM tests
-       WHERE id = $1
-       RETURNING *`,
+    await pool.query('BEGIN');
+
+    const testResult = await pool.query(
+      'SELECT id, class_id FROM tests WHERE id = $1',
+      [parseInt(testId)]
+    );
+
+    if (testResult.rows.length === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    const existingSubmission = await pool.query(
+      `SELECT id, status
+       FROM test_submissions
+       WHERE test_id = $1 AND student_id = $2
+       LIMIT 1`,
       [parseInt(testId), studentId]
     );
 
+    if (existingSubmission.rows.length > 0 && existingSubmission.rows[0].status === 'graded') {
+      await pool.query('ROLLBACK');
+      return res.status(409).json({ message: 'Test already submitted and graded' });
+    }
+
+    const submissionResult = await pool.query(
+      `INSERT INTO test_submissions (test_id, student_id, class_id, started_at, submitted_at, status)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'submitted')
+       ON CONFLICT (test_id, student_id)
+       DO UPDATE SET
+         status = 'submitted',
+         submitted_at = CURRENT_TIMESTAMP,
+         started_at = COALESCE(test_submissions.started_at, CURRENT_TIMESTAMP),
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [parseInt(testId), studentId, testResult.rows[0].class_id]
+    );
+
     if (submissionResult.rows.length === 0) {
+      await pool.query('ROLLBACK');
       return res.status(404).json({ message: 'Test not found' });
     }
 
     const submissionId = submissionResult.rows[0].id;
+
+    await pool.query('DELETE FROM test_answers WHERE submission_id = $1', [submissionId]);
 
     // Auto-grade MCQs and calculate score
     let totalScore = 0;
@@ -263,16 +368,27 @@ export const submitTestAnswers = async (req: Request, res: Response) => {
       if (question.question_type === 'mcq') {
         const optionResult = await pool.query(
           'SELECT is_correct FROM question_options WHERE id = $1',
-          [answer.answer]
+          [Number(answer.answer)]
         );
 
-        if (optionResult.rows.length > 0 && optionResult.rows[0].is_correct) {
+        if (optionResult.rows.length > 0 && Boolean(optionResult.rows[0].is_correct)) {
           isCorrect = true;
           pointsAwarded = question.points;
           totalScore += pointsAwarded;
+        } else if (!Number.isNaN(Number(answer.answer))) {
+          const fallbackOptionResult = await pool.query(
+            'SELECT is_correct FROM question_options WHERE question_id = $1 AND option_number = $2',
+            [answer.questionId, Number(answer.answer)]
+          );
+
+          if (fallbackOptionResult.rows.length > 0 && Boolean(fallbackOptionResult.rows[0].is_correct)) {
+            isCorrect = true;
+            pointsAwarded = question.points;
+            totalScore += pointsAwarded;
+          }
         }
       } else if (question.question_type === 'true_false') {
-        isCorrect = String(answer.answer).toLowerCase() === String(question.correct_answer).toLowerCase();
+        isCorrect = normalizeAnswerValue(answer.answer).toLowerCase() === normalizeAnswerValue(question.correct_answer).toLowerCase();
         if (isCorrect) {
           pointsAwarded = question.points;
           totalScore += pointsAwarded;
@@ -284,7 +400,7 @@ export const submitTestAnswers = async (req: Request, res: Response) => {
       await pool.query(
         `INSERT INTO test_answers (submission_id, question_id, student_answer, points_awarded, is_correct)
          VALUES ($1, $2, $3, $4, $5)`,
-        [submissionId, answer.questionId, String(answer.answer), pointsAwarded, isCorrect]
+        [submissionId, answer.questionId, normalizeAnswerValue(answer.answer), pointsAwarded, isCorrect]
       );
     }
 
@@ -298,6 +414,8 @@ export const submitTestAnswers = async (req: Request, res: Response) => {
       [totalScore, maxScore, percentage, 'graded', submissionId]
     );
 
+    await pool.query('COMMIT');
+
     res.json({
       message: 'Test submitted successfully',
       submission: {
@@ -308,8 +426,127 @@ export const submitTestAnswers = async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
+    await pool.query('ROLLBACK');
     console.error('Error submitting test:', error);
     res.status(500).json({ message: 'Error submitting test' });
+  }
+};
+
+export const saveTestProgress = async (req: Request, res: Response) => {
+  try {
+    const { testId } = req.params;
+    const { answers } = req.body;
+    const studentId = (req as any).user?.id;
+
+    if (!studentId || !Array.isArray(answers)) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    await pool.query('BEGIN');
+
+    const testResult = await pool.query(
+      'SELECT id, class_id FROM tests WHERE id = $1',
+      [parseInt(testId)]
+    );
+
+    if (testResult.rows.length === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    const existingSubmission = await pool.query(
+      `SELECT id, status
+       FROM test_submissions
+       WHERE test_id = $1 AND student_id = $2
+       LIMIT 1`,
+      [parseInt(testId), studentId]
+    );
+
+    if (existingSubmission.rows.length > 0 && existingSubmission.rows[0].status === 'graded') {
+      await pool.query('ROLLBACK');
+      return res.status(409).json({ message: 'Test already graded. Progress cannot be updated.' });
+    }
+
+    const submissionResult = await pool.query(
+      `INSERT INTO test_submissions (test_id, student_id, class_id, started_at, status)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP, 'in_progress')
+       ON CONFLICT (test_id, student_id)
+       DO UPDATE SET
+         status = CASE
+           WHEN test_submissions.status = 'graded' THEN test_submissions.status
+           ELSE 'in_progress'
+         END,
+         started_at = COALESCE(test_submissions.started_at, CURRENT_TIMESTAMP),
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [parseInt(testId), studentId, testResult.rows[0].class_id]
+    );
+
+    const submissionId = submissionResult.rows[0].id;
+
+    await pool.query('DELETE FROM test_answers WHERE submission_id = $1', [submissionId]);
+
+    for (const answer of answers) {
+      if (!answer?.questionId) {
+        continue;
+      }
+
+      await pool.query(
+        `INSERT INTO test_answers (submission_id, question_id, student_answer)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (submission_id, question_id)
+         DO UPDATE SET
+           student_answer = EXCLUDED.student_answer,
+           updated_at = CURRENT_TIMESTAMP`,
+        [submissionId, Number(answer.questionId), normalizeAnswerValue(answer.answer)]
+      );
+    }
+
+    await pool.query('COMMIT');
+
+    return res.json({
+      message: 'Progress saved successfully',
+      submissionId
+    });
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error saving test progress:', error);
+    return res.status(500).json({ message: 'Error saving test progress' });
+  }
+};
+
+export const getStudentTestProgress = async (req: Request, res: Response) => {
+  try {
+    const { testId } = req.params;
+    const studentId = (req as any).user?.id;
+
+    const submissionResult = await pool.query(
+      `SELECT id, status
+       FROM test_submissions
+       WHERE test_id = $1 AND student_id = $2
+       LIMIT 1`,
+      [parseInt(testId), studentId]
+    );
+
+    if (submissionResult.rows.length === 0) {
+      return res.json({ answers: [], status: 'not_started' });
+    }
+
+    const submission = submissionResult.rows[0];
+    const answersResult = await pool.query(
+      `SELECT question_id as "questionId", student_answer as "answer"
+       FROM test_answers
+       WHERE submission_id = $1`,
+      [submission.id]
+    );
+
+    return res.json({
+      status: submission.status,
+      answers: answersResult.rows
+    });
+  } catch (error) {
+    console.error('Error loading test progress:', error);
+    return res.status(500).json({ message: 'Error loading test progress' });
   }
 };
 
@@ -387,6 +624,10 @@ export const generateQuizFromPDF = async (req: Request, res: Response) => {
       subjectId,
       title,
       pdfUrl,
+      syllabusTopicId,
+      chapterTitle,
+      includeCoveredTopics,
+      sourceType,
       numQuestions,
       difficulty,
       questionTypes,
@@ -395,11 +636,79 @@ export const generateQuizFromPDF = async (req: Request, res: Response) => {
     } = req.body;
     const teacherId = (req as any).user?.id;
 
-    if (!classId || !subjectId || !title || !pdfUrl || !teacherId) {
+    if (!classId || !subjectId || !title || !teacherId) {
       return res.status(400).json({ message: 'Missing required fields for quiz generation' });
     }
 
-    const extractedText = await extractTextFromPDF(pdfUrl);
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(400).json({ message: 'Gemini API key is missing on server. Please set GEMINI_API_KEY in backend .env' });
+    }
+
+    let extractedText = '';
+
+    if (sourceType === 'pdf' || pdfUrl) {
+      if (!pdfUrl) {
+        return res.status(400).json({ message: 'PDF source selected but no PDF uploaded' });
+      }
+      extractedText = await extractTextFromPDF(pdfUrl);
+    } else {
+      let topicRows: any[] = [];
+
+      if (syllabusTopicId) {
+        const selectedTopic = await pool.query(
+          `SELECT st.id, st.syllabus_id, st.topic_number, st.title, st.description, st.status
+           FROM syllabus_topics st
+           JOIN syllabuses s ON st.syllabus_id = s.id
+           WHERE st.id = $1 AND s.class_id = $2 AND s.subject_id = $3`,
+          [Number(syllabusTopicId), Number(classId), Number(subjectId)]
+        );
+
+        if (selectedTopic.rows.length > 0) {
+          const current = selectedTopic.rows[0];
+          if (includeCoveredTopics) {
+            const previousTopics = await pool.query(
+              `SELECT st.topic_number, st.title, st.description, st.status
+               FROM syllabus_topics st
+               WHERE st.syllabus_id = $1
+                 AND st.topic_number <= $2
+               ORDER BY st.topic_number`,
+              [current.syllabus_id, current.topic_number]
+            );
+            topicRows = previousTopics.rows;
+          } else {
+            topicRows = [current];
+          }
+        }
+      }
+
+      if (topicRows.length === 0) {
+        const coveredTopics = await pool.query(
+          `SELECT st.topic_number, st.title, st.description, st.status
+           FROM syllabus_topics st
+           JOIN syllabuses s ON st.syllabus_id = s.id
+           WHERE s.class_id = $1
+             AND s.subject_id = $2
+             AND st.status IN ('covered', 'ongoing')
+           ORDER BY st.topic_number`,
+          [Number(classId), Number(subjectId)]
+        );
+        topicRows = coveredTopics.rows;
+      }
+
+      if (topicRows.length === 0 && !chapterTitle) {
+        return res.status(400).json({ message: 'No syllabus topics found for this class/subject. Select a topic or upload PDF.' });
+      }
+
+      const chapterContext = chapterTitle ? `Target Chapter/Unit: ${chapterTitle}\n\n` : '';
+      const topicsContext = topicRows.length > 0
+        ? topicRows
+            .map((row) => `Topic ${row.topic_number}: ${row.title}${row.description ? ` - ${row.description}` : ''} [${row.status}]`)
+            .join('\n')
+        : 'No syllabus topics available.';
+
+      extractedText = `${chapterContext}Syllabus Topic Context:\n${topicsContext}`;
+    }
+
     const generated = await generateQuizFromContent({
       content: extractedText,
       title,
@@ -417,7 +726,9 @@ export const generateQuizFromPDF = async (req: Request, res: Response) => {
         subjectId,
         teacherId,
         title,
-        'AI generated quiz from uploaded notes/PDF',
+        sourceType === 'pdf' || pdfUrl
+          ? 'AI generated quiz from uploaded notes/PDF'
+          : 'AI generated quiz from syllabus topics/chapter context',
         generated.questions.length,
         startTime || null,
         endTime || null
@@ -461,6 +772,18 @@ export const generateQuizFromPDF = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Generate quiz from PDF error:', error);
-    return res.status(500).json({ message: error.message || 'Error generating quiz' });
+    const message = String(error?.message || 'Error generating quiz');
+
+    if (message.toLowerCase().includes('api key')) {
+      return res.status(400).json({ message });
+    }
+    if (message.toLowerCase().includes('quota') || message.toLowerCase().includes('permission')) {
+      return res.status(502).json({ message: `Gemini API error: ${message}` });
+    }
+    if (message.toLowerCase().includes('pdf')) {
+      return res.status(400).json({ message });
+    }
+
+    return res.status(500).json({ message });
   }
 };

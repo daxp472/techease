@@ -112,11 +112,14 @@ export const syllabusAPI = {
 
 export const testAPI = {
   create: (data: any) => api.post('/tests', data),
+  generateQuiz: (data: any) => api.post('/tests/generate-from-pdf', data),
   generateFromPDF: (data: any) => api.post('/tests/generate-from-pdf', data),
   addQuestion: (testId: number, data: any) => api.post(`/tests/${testId}/questions`, data),
   publish: (testId: number, data: any) => api.put(`/tests/${testId}/publish`, data),
-  getByClass: (params: { classId: number }) => api.get('/tests/class', { params }),
+  getByClass: (params?: { classId?: number }) => api.get('/tests/class', { params }),
   getById: (testId: number) => api.get(`/tests/${testId}`),
+  getProgress: (testId: number) => api.get(`/tests/${testId}/progress`),
+  saveProgress: (testId: number, data: any) => api.post(`/tests/${testId}/save`, data),
   submit: (testId: number, data: any) => api.post(`/tests/${testId}/submit`, data),
   getResults: (testId: number) => api.get(`/tests/${testId}/results`),
   getAnalytics: (testId: number) => api.get(`/tests/${testId}/analytics`),
