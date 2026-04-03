@@ -154,5 +154,29 @@ export interface ClassAnalytics {
     lastName: string;
     rollNumber: string;
     averagePercentage: number;
+    totalAssessments?: number;
+    attendancePercentage?: number;
   }>;
+  testPerformance?: Array<{
+    id: number;
+    title: string;
+    status: string;
+    testType: string;
+    totalQuestions: number;
+    totalSubmissions: number;
+    gradedSubmissions: number;
+    averagePercentage: number;
+    minPercentage: number;
+    maxPercentage: number;
+    startTime?: string | null;
+    endTime?: string | null;
+  }>;
+  testStats?: {
+    totalTests: number;
+    scheduledTests: number;
+    activeTests: number;
+    completedTests: number;
+    studentsWithResults: number;
+    gradedSubmissions: number;
+  };
 }

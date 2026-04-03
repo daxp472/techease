@@ -194,6 +194,103 @@ export const seedDatabase = async () => {
       [teacherId]
     );
 
+    // Add extra attendance records to produce realistic attendance analytics and early-warning signals.
+    await pool.query(
+      `INSERT INTO attendance (student_id, class_id, subject_id, date, status, marked_by)
+       SELECT
+         u.id,
+         c.id,
+         s.id,
+         a.attendance_date::date,
+         a.status,
+         $1
+       FROM (
+         VALUES
+           ('student1@demo.com', '10', 'A', 'MATH', CURRENT_DATE - INTERVAL '4 days', 'present'),
+           ('student1@demo.com', '10', 'A', 'SCI', CURRENT_DATE - INTERVAL '3 days', 'present'),
+           ('student1@demo.com', '10', 'A', 'ENG', CURRENT_DATE - INTERVAL '2 days', 'present'),
+           ('student2@demo.com', '10', 'A', 'MATH', CURRENT_DATE - INTERVAL '4 days', 'present'),
+           ('student2@demo.com', '10', 'A', 'SCI', CURRENT_DATE - INTERVAL '3 days', 'absent'),
+           ('student2@demo.com', '10', 'A', 'ENG', CURRENT_DATE - INTERVAL '2 days', 'late'),
+           ('student3@demo.com', '10', 'A', 'MATH', CURRENT_DATE - INTERVAL '4 days', 'absent'),
+           ('student3@demo.com', '10', 'A', 'SCI', CURRENT_DATE - INTERVAL '3 days', 'present'),
+           ('student3@demo.com', '10', 'A', 'ENG', CURRENT_DATE - INTERVAL '2 days', 'absent'),
+           ('student4@demo.com', '10', 'A', 'MATH', CURRENT_DATE - INTERVAL '4 days', 'present'),
+           ('student4@demo.com', '10', 'A', 'SCI', CURRENT_DATE - INTERVAL '3 days', 'present'),
+           ('student4@demo.com', '10', 'A', 'ENG', CURRENT_DATE - INTERVAL '2 days', 'present'),
+           ('student6@demo.com', '10', 'B', 'SCI', CURRENT_DATE - INTERVAL '4 days', 'present'),
+           ('student6@demo.com', '10', 'B', 'MATH', CURRENT_DATE - INTERVAL '3 days', 'present'),
+           ('student6@demo.com', '10', 'B', 'ENG', CURRENT_DATE - INTERVAL '2 days', 'absent')
+       ) AS a(email, grade, section, subject_code, attendance_date, status)
+       JOIN users u ON u.email = a.email
+       JOIN classes c ON c.grade = a.grade AND c.section = a.section AND c.academic_year = '2024-2025'
+       JOIN subjects s ON s.code = a.subject_code
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM attendance existing
+         WHERE existing.student_id = u.id
+           AND existing.class_id = c.id
+           AND existing.subject_id = s.id
+           AND existing.date = a.attendance_date::date
+       )`,
+      [teacherId]
+    );
+
+    // Additional grade rows for class A and B to make class analytics meaningful.
+    await pool.query(
+      `INSERT INTO grades (student_id, class_id, subject_id, exam_type_id, marks_obtained, max_marks, grade, exam_date, entered_by)
+       SELECT
+         u.id,
+         c.id,
+         s.id,
+         et.id,
+         g.marks_obtained,
+         g.max_marks,
+         CASE
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 90 THEN 'A+'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 80 THEN 'A'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 70 THEN 'B+'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 60 THEN 'B'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 50 THEN 'C'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 40 THEN 'D'
+           ELSE 'F'
+         END,
+         g.exam_date,
+         $1
+       FROM (
+         VALUES
+           ('student1@demo.com', '10', 'A', 'MATH', 'Mid Term', 92.00, 100.00, CURRENT_DATE - INTERVAL '35 days'),
+           ('student1@demo.com', '10', 'A', 'SCI', 'Unit Test', 88.00, 100.00, CURRENT_DATE - INTERVAL '25 days'),
+           ('student1@demo.com', '10', 'A', 'ENG', 'Quiz', 84.00, 100.00, CURRENT_DATE - INTERVAL '15 days'),
+           ('student2@demo.com', '10', 'A', 'MATH', 'Mid Term', 61.00, 100.00, CURRENT_DATE - INTERVAL '35 days'),
+           ('student2@demo.com', '10', 'A', 'SCI', 'Unit Test', 44.00, 100.00, CURRENT_DATE - INTERVAL '25 days'),
+           ('student2@demo.com', '10', 'A', 'ENG', 'Quiz', 48.00, 100.00, CURRENT_DATE - INTERVAL '15 days'),
+           ('student3@demo.com', '10', 'A', 'MATH', 'Mid Term', 38.00, 100.00, CURRENT_DATE - INTERVAL '35 days'),
+           ('student3@demo.com', '10', 'A', 'SCI', 'Unit Test', 41.00, 100.00, CURRENT_DATE - INTERVAL '25 days'),
+           ('student3@demo.com', '10', 'A', 'ENG', 'Quiz', 45.00, 100.00, CURRENT_DATE - INTERVAL '15 days'),
+           ('student4@demo.com', '10', 'A', 'MATH', 'Mid Term', 74.00, 100.00, CURRENT_DATE - INTERVAL '35 days'),
+           ('student4@demo.com', '10', 'A', 'SCI', 'Unit Test', 79.00, 100.00, CURRENT_DATE - INTERVAL '25 days'),
+           ('student4@demo.com', '10', 'A', 'ENG', 'Quiz', 71.00, 100.00, CURRENT_DATE - INTERVAL '15 days'),
+           ('student6@demo.com', '10', 'B', 'SCI', 'Mid Term', 90.00, 100.00, CURRENT_DATE - INTERVAL '35 days'),
+           ('student6@demo.com', '10', 'B', 'MATH', 'Unit Test', 85.00, 100.00, CURRENT_DATE - INTERVAL '25 days'),
+           ('student6@demo.com', '10', 'B', 'ENG', 'Quiz', 87.00, 100.00, CURRENT_DATE - INTERVAL '15 days')
+       ) AS g(email, grade, section, subject_code, exam_type_name, marks_obtained, max_marks, exam_date)
+       JOIN users u ON u.email = g.email
+       JOIN classes c ON c.grade = g.grade AND c.section = g.section AND c.academic_year = '2024-2025'
+       JOIN subjects s ON s.code = g.subject_code
+       JOIN exam_types et ON LOWER(et.name) = LOWER(g.exam_type_name)
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM grades existing
+         WHERE existing.student_id = u.id
+           AND existing.class_id = c.id
+           AND existing.subject_id = s.id
+           AND existing.exam_type_id = et.id
+           AND existing.exam_date = g.exam_date::date
+       )`,
+      [teacherId]
+    );
+
     // Seed showcase tests (scheduled, active, completed) without creating duplicates
     await pool.query(
       `INSERT INTO tests (class_id, subject_id, teacher_id, title, description, total_questions, test_type, status, start_time, end_time)
@@ -261,6 +358,29 @@ export const seedDatabase = async () => {
        FROM tests t
        JOIN classes c ON c.id = t.class_id
        JOIN users u ON u.email = 'student2@demo.com'
+       WHERE t.title = 'Science Concepts Review'
+       ON CONFLICT (test_id, student_id)
+       DO UPDATE SET
+         score = EXCLUDED.score,
+         total_score = EXCLUDED.total_score,
+         percentage = EXCLUDED.percentage,
+         status = 'graded',
+         submitted_at = EXCLUDED.submitted_at,
+         updated_at = CURRENT_TIMESTAMP`
+    );
+
+    await pool.query(
+      `INSERT INTO test_submissions (test_id, student_id, class_id, started_at, submitted_at, score, total_score, percentage, status)
+       SELECT t.id, u.id, c.id, NOW() - INTERVAL '4 days 2 hours', NOW() - INTERVAL '4 days 1 hour', s.score, s.total_score, s.percentage, 'graded'
+       FROM tests t
+       JOIN classes c ON c.id = t.class_id
+       JOIN users u ON u.email = s.email
+       JOIN (
+         VALUES
+           ('student1@demo.com', 2, 3, 66.67),
+           ('student3@demo.com', 1, 3, 33.33),
+           ('student4@demo.com', 3, 3, 100)
+       ) AS s(email, score, total_score, percentage)
        WHERE t.title = 'Science Concepts Review'
        ON CONFLICT (test_id, student_id)
        DO UPDATE SET

@@ -96,6 +96,16 @@ export const timetableAPI = {
 export const analyticsAPI = {
   getClassAnalytics: (classId: number) =>
     api.get(`/analytics/class/${classId}`),
+  getClassInterventionSignals: (
+    classId: number,
+    params: {
+      lowThreshold: number;
+      highThreshold: number;
+      topicThreshold: number;
+      classThreshold: number;
+      attendanceThreshold: number;
+    }
+  ) => api.get(`/analytics/class/${classId}/intervention-signals`, { params }),
   getStudentAnalytics: (studentId: number) =>
     api.get(`/analytics/student/${studentId}`),
   getDashboardStats: () => api.get('/analytics/dashboard'),
