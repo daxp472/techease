@@ -65,6 +65,8 @@ export const classAPI = {
 export const attendanceAPI = {
   mark: (data: any) => api.post('/attendance', data),
   markBulk: (data: any) => api.post('/attendance/bulk', data),
+  lock: (data: { classId: number; date: string }) => api.post('/attendance/lock', data),
+  getLockStatus: (params: { classId: string; date: string }) => api.get('/attendance/lock-status', { params }),
   getByClass: (params: any) => api.get('/attendance/class', { params }),
   getByStudent: (studentId: number, params?: any) =>
     api.get(`/attendance/student/${studentId}`, { params }),
@@ -97,6 +99,27 @@ export const analyticsAPI = {
   getStudentAnalytics: (studentId: number) =>
     api.get(`/analytics/student/${studentId}`),
   getDashboardStats: () => api.get('/analytics/dashboard'),
+};
+
+export const syllabusAPI = {
+  create: (data: any) => api.post('/syllabus', data),
+  getTeacherSyllabuses: () => api.get('/syllabus/teacher'),
+  getByClass: (params: { classId: number; subjectId: number }) => api.get('/syllabus/class', { params }),
+  getStudentView: (params: { classId: number }) => api.get('/syllabus/student-view', { params }),
+  updateTopicStatus: (topicId: number, data: any) => api.patch(`/syllabus/topics/${topicId}/status`, data),
+  delete: (syllabusId: number) => api.delete(`/syllabus/${syllabusId}`),
+};
+
+export const testAPI = {
+  create: (data: any) => api.post('/tests', data),
+  generateFromPDF: (data: any) => api.post('/tests/generate-from-pdf', data),
+  addQuestion: (testId: number, data: any) => api.post(`/tests/${testId}/questions`, data),
+  publish: (testId: number, data: any) => api.put(`/tests/${testId}/publish`, data),
+  getByClass: (params: { classId: number }) => api.get('/tests/class', { params }),
+  getById: (testId: number) => api.get(`/tests/${testId}`),
+  submit: (testId: number, data: any) => api.post(`/tests/${testId}/submit`, data),
+  getResults: (testId: number) => api.get(`/tests/${testId}/results`),
+  getAnalytics: (testId: number) => api.get(`/tests/${testId}/analytics`),
 };
 
 export default api;
