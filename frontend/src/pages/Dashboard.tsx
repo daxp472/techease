@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { analyticsAPI, timetableAPI } from '../services/api';
-import { DashboardStats, Timetable } from '../types';
-import { Users, BookOpen, Calendar, ClipboardCheck, ListTodo, ArrowUpRight } from 'lucide-react';
+import { analyticsAPI, classAPI, timetableAPI } from '../services/api';
+import { Class, DashboardStats, Timetable } from '../types';
+import { Users, BookOpen, Calendar, ClipboardCheck, ListTodo, ArrowUpRight, AlertTriangle } from 'lucide-react';
 import Layout from '../components/Layout';
 import LoadingState from '../components/ui/LoadingState';
 import PageHeader from '../components/ui/PageHeader';
@@ -22,10 +22,26 @@ const normalizeDashboardStats = (payload: any): DashboardStats => ({
   totalTeachers: toNumber(payload.totalTeachers ?? payload.total_teachers)
 });
 
+type DashboardAttentionStudent = {
+  id: number;
+  classId: number;
+  className: string;
+  classGrade: string;
+  classSection: string;
+  firstName: string;
+  lastName: string;
+  rollNumber: string;
+  overallPercentage: number;
+  attendancePercentage: number;
+  status: 'critical' | 'watchlist' | 'stable';
+  reasons: string[];
+};
+
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({});
   const [todaysTimetable, setTodaysTimetable] = useState<Timetable[]>([]);
+  const [attentionStudents, setAttentionStudents] = useState<DashboardAttentionStudent[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,12 +54,63 @@ const Dashboard: React.FC = () => {
       setStats(normalizeDashboardStats(statsRes.data));
 
       if (user?.role === 'teacher') {
-        const timetableRes = await timetableAPI.getByTeacher();
+        const [timetableRes, classesRes] = await Promise.all([
+          timetableAPI.getByTeacher(),
+          classAPI.getAll()
+        ]);
+
         const today = new Date().getDay();
         const todaysSchedule = timetableRes.data.timetable.filter(
           (item: Timetable) => Number(item.dayOfWeek) === today
         );
         setTodaysTimetable(todaysSchedule);
+
+        const classes: Class[] = classesRes.data.classes || [];
+        const signalsResponses = await Promise.all(
+          classes.map((cls) =>
+            analyticsAPI
+              .getClassInterventionSignals(cls.id, {
+                lowThreshold: 50,
+                highThreshold: 80,
+                topicThreshold: 60,
+                classThreshold: 65,
+                attendanceThreshold: 75
+              })
+              .then((response) => ({ cls, data: response.data }))
+              .catch(() => null)
+          )
+        );
+
+        const mergedStudents = signalsResponses
+          .filter((entry): entry is { cls: Class; data: any } => Boolean(entry))
+          .flatMap(({ cls, data }) => {
+            const rows = Array.isArray(data?.students) ? data.students : [];
+            return rows
+              .filter((student: any) => student.status === 'critical' || student.status === 'watchlist')
+              .map((student: any) => ({
+                id: Number(student.id),
+                classId: Number(cls.id),
+                className: cls.name,
+                classGrade: cls.grade,
+                classSection: cls.section,
+                firstName: student.firstName ?? student.first_name ?? '',
+                lastName: student.lastName ?? student.last_name ?? '',
+                rollNumber: student.rollNumber ?? student.roll_number ?? '-',
+                overallPercentage: Number(student.overallPercentage ?? student.overall_percentage ?? 0),
+                attendancePercentage: Number(student.attendancePercentage ?? student.attendance_percentage ?? 0),
+                status: (student.status ?? 'stable') as 'critical' | 'watchlist' | 'stable',
+                reasons: Array.isArray(student.reasons) ? student.reasons : []
+              }));
+          })
+          .sort((a, b) => {
+            if (a.status !== b.status) {
+              return a.status === 'critical' ? -1 : 1;
+            }
+            return a.overallPercentage - b.overallPercentage;
+          })
+          .slice(0, 6);
+
+        setAttentionStudents(mergedStudents);
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -222,6 +289,54 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {user?.role === 'teacher' && (
+          <div className="mb-8 card p-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-rose-700" />
+                <h2 className="text-lg font-semibold text-slate-900">Students Needing Attention</h2>
+              </div>
+              <Link to="/analytics" className="text-sm font-semibold text-teal-700">Open Full Analytics</Link>
+            </div>
+
+            {attentionStudents.length === 0 ? (
+              <div className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">
+                Great work. No critical or watchlist students detected with the current thresholds.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {attentionStudents.map((student) => (
+                  <div key={`${student.classId}-${student.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-900">
+                          {student.firstName} {student.lastName} ({student.rollNumber})
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          {student.className} • Grade {student.classGrade} {student.classSection}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          Overall {Math.round(student.overallPercentage)}% • Attendance {Math.round(student.attendancePercentage)}%
+                        </p>
+                      </div>
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${student.status === 'critical' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {student.status}
+                      </span>
+                    </div>
+                    {student.reasons.length > 0 ? (
+                      <p className="mt-2 text-xs text-slate-600">{student.reasons.join(' • ')}</p>
+                    ) : null}
+                    <div className="mt-3 flex items-center gap-3 text-xs font-semibold">
+                      <Link to={`/students/${student.id}`} className="text-teal-700 hover:text-teal-800 hover:underline">Open Profile</Link>
+                      <Link to="/analytics" className="text-slate-600 hover:text-slate-800 hover:underline">View Class Signals</Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
