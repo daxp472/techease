@@ -88,6 +88,17 @@ const TestAttempt: React.FC = () => {
 
   const submitAttempt = async () => {
     if (!id) return;
+
+    const hasUnanswered = questions.some((question) => {
+      const answer = answers[question.id];
+      return answer === undefined || answer === null || String(answer).trim() === '';
+    });
+
+    if (hasUnanswered) {
+      showToast('Please answer all questions before submitting.', 'error');
+      return;
+    }
+
     setSubmitting(true);
     try {
       await testAPI.submit(Number(id), {
@@ -101,25 +112,6 @@ const TestAttempt: React.FC = () => {
       navigate('/student/tests');
     } catch {
       showToast('Unable to submit test', 'error');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const saveProgressAndExit = async () => {
-    if (!id) return;
-    setSubmitting(true);
-    try {
-      await testAPI.saveProgress(Number(id), {
-        answers: questions.map((question) => ({
-          questionId: question.id,
-          answer: answers[question.id] ?? ''
-        }))
-      });
-      showToast('Progress saved', 'success');
-      navigate('/student/tests');
-    } catch {
-      showToast('Unable to save progress', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -180,9 +172,6 @@ const TestAttempt: React.FC = () => {
           </div>
 
           <div className="mt-6 flex justify-end gap-3">
-            <button type="button" className="btn-secondary" onClick={saveProgressAndExit} disabled={submitting}>
-              {submitting ? 'Saving...' : 'Save & Exit'}
-            </button>
             <button type="button" className="btn-primary" onClick={submitAttempt} disabled={submitting}>
               {submitting ? 'Submitting...' : 'Submit Test'}
             </button>
