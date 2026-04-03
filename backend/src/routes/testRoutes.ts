@@ -2,6 +2,8 @@ import express from 'express';
 import {
   createTest,
   addQuestion,
+  replaceTestQuestions,
+  updateTestSettings,
   getTest,
   publishTest,
   getClassTests,
@@ -19,6 +21,8 @@ const router = express.Router();
 router.post('/', authenticate, authorize('teacher', 'admin'), createTest);
 router.post('/generate-from-pdf', authenticate, authorize('teacher', 'admin'), generateQuizFromPDF);
 router.post('/:testId/questions', authenticate, authorize('teacher', 'admin'), addQuestion);
+router.put('/:testId/questions', authenticate, authorize('teacher', 'admin'), replaceTestQuestions);
+router.put('/:testId/settings', authenticate, authorize('teacher', 'admin'), updateTestSettings);
 router.put('/:testId/publish', authenticate, authorize('teacher', 'admin'), publishTest);
 router.get('/class', authenticate, getClassTests);
 router.get('/:testId', authenticate, getTest);

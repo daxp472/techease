@@ -32,6 +32,56 @@ interface TestRow {
   shuffle_questions?: boolean;
   duration_minutes?: number;
   passing_score?: number;
+  submission_status?: 'in_progress' | 'submitted' | 'graded';
+  submission_score?: number;
+  submission_total_score?: number;
+  submission_percentage?: number;
+}
+
+interface TestAnswerRow {
+  questionId: number;
+  questionNumber: number;
+  questionText: string;
+  questionType: string;
+  studentAnswer: string;
+  pointsAwarded?: number;
+  maxPoints?: number;
+  isCorrect?: boolean;
+}
+
+interface TestSubmissionRow {
+  id: number;
+  studentId: number;
+  firstName?: string;
+  lastName?: string;
+  rollNumber?: string;
+  score?: number;
+  totalScore?: number;
+  percentage?: number;
+  status?: string;
+  startedAt?: string;
+  submittedAt?: string;
+  answers?: TestAnswerRow[];
+  failedQuestions?: Array<{
+    questionNumber: number;
+    questionText: string;
+    questionType: string;
+    studentAnswer: string;
+    pointsAwarded?: number;
+    maxPoints?: number;
+    isCorrect?: boolean;
+  }>;
+}
+
+interface StudentResultState {
+  test: any;
+  submission: {
+    score?: number;
+    total_score?: number;
+    percentage?: number;
+    status?: string;
+    submitted_at?: string;
+  };
 }
 
 interface DraftOption {
@@ -41,6 +91,17 @@ interface DraftOption {
 }
 
 interface DraftQuestion {
+  questionNumber: number;
+  questionText: string;
+  questionType: 'mcq' | 'short_answer' | 'long_answer' | 'true_false';
+  correctAnswer: string;
+  points: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+  options: DraftOption[];
+}
+
+interface ReviewQuestion {
+  id?: number;
   questionNumber: number;
   questionText: string;
   questionType: 'mcq' | 'short_answer' | 'long_answer' | 'true_false';
@@ -100,6 +161,28 @@ const normalizeTestDetails = (test: any) => ({
   questions: Array.isArray(test.questions) ? test.questions.map(normalizeQuestion) : []
 });
 
+const toReviewQuestion = (question: any, index: number): ReviewQuestion => ({
+  id: question.id,
+  questionNumber: Number(question.questionNumber ?? index + 1),
+  questionText: question.questionText ?? '',
+  questionType: question.questionType ?? 'mcq',
+  correctAnswer: question.correctAnswer ?? '',
+  points: Number(question.points ?? 1),
+  difficulty: question.difficulty ?? 'medium',
+  options: Array.isArray(question.options) && question.options.length > 0
+    ? question.options.map((option: any, optionIndex: number) => ({
+        optionNumber: Number(option.optionNumber ?? optionIndex + 1),
+        optionText: option.optionText ?? '',
+        isCorrect: Boolean(option.isCorrect)
+      }))
+    : [
+        { optionNumber: 1, optionText: '', isCorrect: false },
+        { optionNumber: 2, optionText: '', isCorrect: true },
+        { optionNumber: 3, optionText: '', isCorrect: false },
+        { optionNumber: 4, optionText: '', isCorrect: false }
+      ]
+});
+
 const Tests: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
@@ -110,10 +193,28 @@ const Tests: React.FC = () => {
   const [tests, setTests] = useState<TestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [creatingManual, setCreatingManual] = useState(false);
+  const [generatingAi, setGeneratingAi] = useState(false);
+  const [startingTest, setStartingTest] = useState(false);
+  const [savingReview, setSavingReview] = useState(false);
+  const [reviewStep, setReviewStep] = useState<'edit' | 'schedule'>('edit');
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [showAiCreate, setShowAiCreate] = useState(false);
   const [selectedTest, setSelectedTest] = useState<any | null>(null);
+  const [studentResult, setStudentResult] = useState<StudentResultState | null>(null);
+  const [testResults, setTestResults] = useState<{ summary?: any; submissions?: TestSubmissionRow[]; questions?: any[] } | null>(null);
+  const [testAnalytics, setTestAnalytics] = useState<any | null>(null);
+  const [reviewTest, setReviewTest] = useState<any | null>(null);
+  const [reviewQuestions, setReviewQuestions] = useState<ReviewQuestion[]>([]);
+  const [reviewSchedule, setReviewSchedule] = useState({
+    startTime: '',
+    endTime: '',
+    durationMinutes: 60,
+    passingScore: 35,
+    instructions: ''
+  });
   const [aiSource, setAiSource] = useState<'topic' | 'pdf'>('topic');
   const [pdfFileName, setPdfFileName] = useState('');
   const [pdfFileData, setPdfFileData] = useState('');
@@ -133,8 +234,9 @@ const Tests: React.FC = () => {
     chapterTitle: '',
     includePreviousTopics: true,
     title: '',
-    numQuestions: 10,
-    difficulty: 'medium'
+    numQuestions: 5,
+    difficulty: 'medium',
+    questionMode: 'mix'
   });
   const [questionDrafts, setQuestionDrafts] = useState<DraftQuestion[]>([emptyQuestion(1)]);
 
@@ -243,6 +345,7 @@ const Tests: React.FC = () => {
       return;
     }
 
+    setCreatingManual(true);
     try {
       const testRes = await testAPI.create({
         classId: Number(form.classId),
@@ -278,15 +381,18 @@ const Tests: React.FC = () => {
       });
 
       showToast('Test created successfully', 'success');
-      setShowCreate(false);
       setForm({ classId: '', subjectId: '', title: '', description: '', instructions: '', startTime: '', endTime: '' });
       setQuestionDrafts([emptyQuestion(1)]);
       if (selectedClass) {
         const listRes = await testAPI.getByClass({ classId: Number(selectedClass) });
         setTests(listRes.data.tests || []);
       }
+      setShowCreate(false);
+      await openTestDetails(testId);
     } catch {
       showToast('Unable to create test', 'error');
+    } finally {
+      setCreatingManual(false);
     }
   };
 
@@ -306,8 +412,13 @@ const Tests: React.FC = () => {
       return;
     }
 
+    setGeneratingAi(true);
     try {
-      await testAPI.generateQuiz({
+      const questionTypes = aiForm.questionMode === 'mix'
+        ? ['mcq', 'short_answer']
+        : [aiForm.questionMode];
+
+      const response = await testAPI.generateQuiz({
         classId: Number(aiForm.classId),
         subjectId: Number(aiForm.subjectId),
         syllabusTopicId: aiForm.topicId ? Number(aiForm.topicId) : null,
@@ -319,11 +430,27 @@ const Tests: React.FC = () => {
         pdfFileName,
         numQuestions: Number(aiForm.numQuestions),
         difficulty: aiForm.difficulty,
-        questionTypes: ['mcq', 'short_answer']
+        questionTypes
       });
-      showToast('AI quiz generated successfully', 'success');
+      showToast('AI quiz generated - review and make changes before activating', 'success');
       setShowAiCreate(false);
-      setAiSource('topic');
+      
+      const generatedTestId = response.data?.test?.id;
+      if (generatedTestId) {
+        const testDetails = await testAPI.getById(Number(generatedTestId));
+        const normalized = normalizeTestDetails(testDetails.data.test);
+        setReviewTest(normalized);
+        setReviewQuestions((normalized.questions || []).map(toReviewQuestion));
+        setReviewStep('edit');
+        setReviewSchedule({
+          startTime: normalized.start_time ? new Date(normalized.start_time).toISOString().slice(0, 16) : '',
+          endTime: normalized.end_time ? new Date(normalized.end_time).toISOString().slice(0, 16) : '',
+          durationMinutes: Number(normalized.duration_minutes || 60),
+          passingScore: Number(normalized.passing_score || 35),
+          instructions: normalized.instructions || ''
+        });
+      }
+      
       setAiForm({
         classId: '',
         subjectId: '',
@@ -331,17 +458,19 @@ const Tests: React.FC = () => {
         chapterTitle: '',
         includePreviousTopics: true,
         title: '',
-        numQuestions: 10,
-        difficulty: 'medium'
+        numQuestions: 5,
+        difficulty: 'medium',
+        questionMode: 'mix'
       });
       setPdfFileName('');
       setPdfFileData('');
-      if (selectedClass) {
-        const listRes = await testAPI.getByClass({ classId: Number(selectedClass) });
-        setTests(listRes.data.tests || []);
-      }
+
+      const listRes = await testAPI.getByClass(selectedClass ? { classId: Number(selectedClass) } : {});
+      setTests(listRes.data.tests || []);
     } catch {
       showToast('AI quiz generation failed. Check Gemini API key and uploaded file.', 'error');
+    } finally {
+      setGeneratingAi(false);
     }
   };
 
@@ -363,15 +492,234 @@ const Tests: React.FC = () => {
     return now >= start && now <= end;
   };
 
+  const hasStudentSubmitted = (test: TestRow) => {
+    if (user?.role !== 'student') return false;
+    return ['submitted', 'graded'].includes(String(test.submission_status || ''));
+  };
+
+  const hasTestEnded = (test: TestRow) => {
+    if (test.status === 'completed') return true;
+    if (!test.end_time) return false;
+    return Date.now() > new Date(test.end_time).getTime();
+  };
+
+  const isTeacherEditLocked = (test: any) => {
+    if (!test) return true;
+    if (test.status === 'active' || test.status === 'completed') return true;
+    const start = test.start_time ? new Date(test.start_time).getTime() : (test.startTime ? new Date(test.startTime).getTime() : null);
+    return Boolean(start && Date.now() >= start);
+  };
+
+  const openStudentResult = async (testId: number) => {
+    setResultsLoading(true);
+    try {
+      const response = await testAPI.getResults(testId);
+      setStudentResult(response.data);
+    } catch {
+      showToast('Result is not available yet for this test.', 'info');
+    } finally {
+      setResultsLoading(false);
+    }
+  };
+
   const openTestDetails = async (testId: number) => {
     setDetailLoading(true);
+    setResultsLoading(true);
     try {
-      const response = await testAPI.getById(testId);
-      setSelectedTest(normalizeTestDetails(response.data.test));
+      const [detailResponse, resultsResponse, analyticsResponse] = await Promise.all([
+        testAPI.getById(testId),
+        user?.role === 'student' ? Promise.resolve(null) : testAPI.getResults(testId),
+        user?.role === 'student' ? Promise.resolve(null) : testAPI.getAnalytics(testId)
+      ]);
+
+      setSelectedTest(normalizeTestDetails(detailResponse.data.test));
+      setTestResults(resultsResponse?.data || null);
+      setTestAnalytics(analyticsResponse?.data || null);
     } catch {
       showToast('Unable to load test details', 'error');
     } finally {
       setDetailLoading(false);
+      setResultsLoading(false);
+    }
+  };
+
+  const updateReviewQuestion = (index: number, patch: Partial<ReviewQuestion>) => {
+    setReviewQuestions((current) => current.map((question, questionIndex) => (
+      questionIndex === index ? { ...question, ...patch } : question
+    )));
+  };
+
+  const updateReviewOption = (questionIndex: number, optionIndex: number, patch: Partial<DraftOption>) => {
+    setReviewQuestions((current) => current.map((question, currentIndex) => {
+      if (currentIndex !== questionIndex) return question;
+      const options = question.options.map((option, currentOptionIndex) => (
+        currentOptionIndex === optionIndex ? { ...option, ...patch } : option
+      ));
+      return { ...question, options };
+    }));
+  };
+
+  const addReviewQuestion = () => {
+    setReviewQuestions((current) => [
+      ...current,
+      {
+        questionNumber: current.length + 1,
+        questionText: '',
+        questionType: 'mcq',
+        correctAnswer: '',
+        points: 1,
+        difficulty: 'medium',
+        options: [
+          { optionNumber: 1, optionText: '', isCorrect: false },
+          { optionNumber: 2, optionText: '', isCorrect: true },
+          { optionNumber: 3, optionText: '', isCorrect: false },
+          { optionNumber: 4, optionText: '', isCorrect: false }
+        ]
+      }
+    ]);
+  };
+
+  const removeReviewQuestion = (index: number) => {
+    setReviewQuestions((current) => current
+      .filter((_, questionIndex) => questionIndex !== index)
+      .map((question, questionIndex) => ({ ...question, questionNumber: questionIndex + 1 })));
+  };
+
+  const proceedToSchedule = () => {
+    const validQuestions = reviewQuestions.filter((question) => question.questionText.trim());
+    if (validQuestions.length === 0) {
+      showToast('Add at least one valid question before proceeding', 'error');
+      return;
+    }
+    setReviewStep('schedule');
+  };
+
+  const startSelectedTest = async () => {
+    if (!selectedTest) return;
+    setStartingTest(true);
+    try {
+      const now = new Date().toISOString();
+      const response = await testAPI.publish(selectedTest.id, {
+        status: 'active',
+        startTime: now,
+        endTime: selectedTest.endTime || selectedTest.end_time || null
+      });
+
+      const refreshedTest = normalizeTestDetails(response.data.test);
+      setSelectedTest(refreshedTest);
+      if (selectedClass) {
+        const listRes = await testAPI.getByClass({ classId: Number(selectedClass) });
+        setTests(listRes.data.tests || []);
+      }
+      showToast('Test started successfully', 'success');
+      await openTestDetails(selectedTest.id);
+    } catch {
+      showToast('Unable to start test', 'error');
+    } finally {
+      setStartingTest(false);
+    }
+  };
+
+  const editSelectedTest = () => {
+    if (!selectedTest || isTeacherEditLocked(selectedTest)) {
+      showToast('Editing is closed after test start time', 'info');
+      return;
+    }
+
+    const normalized = normalizeTestDetails(selectedTest);
+    setReviewTest(normalized);
+    setReviewQuestions((normalized.questions || []).map(toReviewQuestion));
+    setReviewStep('edit');
+    setReviewSchedule({
+      startTime: normalized.start_time ? new Date(normalized.start_time).toISOString().slice(0, 16) : '',
+      endTime: normalized.end_time ? new Date(normalized.end_time).toISOString().slice(0, 16) : '',
+      durationMinutes: Number(normalized.duration_minutes || 60),
+      passingScore: Number(normalized.passing_score || 35),
+      instructions: normalized.instructions || ''
+    });
+    setSelectedTest(null);
+  };
+
+  const publishReviewTest = async () => {
+    if (!reviewTest) return;
+    const validQuestions = reviewQuestions.filter((question) => question.questionText.trim());
+    if (validQuestions.length === 0) {
+      showToast('Add at least one valid question before publishing', 'error');
+      return;
+    }
+
+    if (!reviewSchedule.startTime || !reviewSchedule.endTime) {
+      showToast('Please set start and end time before publishing', 'error');
+      return;
+    }
+
+    if (new Date(reviewSchedule.endTime).getTime() <= new Date(reviewSchedule.startTime).getTime()) {
+      showToast('End time must be after start time', 'error');
+      return;
+    }
+
+    if (reviewSchedule.durationMinutes <= 0) {
+      showToast('Duration must be greater than zero', 'error');
+      return;
+    }
+
+    setSavingReview(true);
+    try {
+      await testAPI.replaceQuestions(reviewTest.id, {
+        questions: validQuestions.map((question, questionIndex) => {
+          const normalizedOptions = question.questionType === 'mcq'
+            ? question.options
+                .map((option, optionIndex) => ({
+                  optionNumber: optionIndex + 1,
+                  optionText: option.optionText,
+                  isCorrect: option.isCorrect
+                }))
+                .filter((option) => option.optionText.trim())
+            : [];
+
+          return {
+            questionNumber: questionIndex + 1,
+            questionText: question.questionText,
+            questionType: question.questionType,
+            correctAnswer: question.correctAnswer,
+            points: question.points,
+            difficulty: question.difficulty,
+            options: normalizedOptions
+          };
+        })
+      });
+
+      await testAPI.updateSettings(reviewTest.id, {
+        title: reviewTest.title,
+        description: reviewTest.description,
+        instructions: reviewSchedule.instructions || null,
+        durationMinutes: Number(reviewSchedule.durationMinutes),
+        passingScore: Number(reviewSchedule.passingScore),
+        startTime: new Date(reviewSchedule.startTime).toISOString(),
+        endTime: new Date(reviewSchedule.endTime).toISOString()
+      });
+
+      const startTimeIso = new Date(reviewSchedule.startTime).toISOString();
+      const endTimeIso = new Date(reviewSchedule.endTime).toISOString();
+      const shouldActivateNow = new Date(startTimeIso).getTime() <= Date.now();
+
+      await testAPI.publish(reviewTest.id, {
+        status: shouldActivateNow ? 'active' : 'scheduled',
+        startTime: startTimeIso,
+        endTime: endTimeIso
+      });
+
+      showToast('Test published successfully and is now scheduled for students', 'success');
+      setReviewTest(null);
+      setReviewQuestions([]);
+      setReviewStep('edit');
+
+      const listRes = await testAPI.getByClass(selectedClass ? { classId: Number(selectedClass) } : {});
+      setTests(listRes.data.tests || []);
+    } catch (error: any) {
+      showToast(error?.response?.data?.message || 'Unable to publish test', 'error');
+    } finally {
+      setSavingReview(false);
     }
   };
 
@@ -408,11 +756,28 @@ const Tests: React.FC = () => {
         ) : (
           <div className="space-y-3">
             {filtered.map((test) => (
-              <button
+              <div
                 key={test.id}
-                type="button"
-                onClick={() => void openTestDetails(test.id)}
-                className="card flex w-full flex-col gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg md:flex-row md:items-center md:justify-between"
+                onClick={() => {
+                  if (user?.role === 'student' && hasTestEnded(test)) {
+                    void openStudentResult(test.id);
+                    return;
+                  }
+                  void openTestDetails(test.id);
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    if (user?.role === 'student' && hasTestEnded(test)) {
+                      void openStudentResult(test.id);
+                      return;
+                    }
+                    void openTestDetails(test.id);
+                  }
+                }}
+                className="card flex w-full cursor-pointer flex-col gap-3 p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg md:flex-row md:items-center md:justify-between"
               >
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{test.title}</h3>
@@ -425,12 +790,78 @@ const Tests: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold capitalize text-slate-700">{test.status}</span>
-                  {user?.role === 'student' && canTakeTestNow(test) ? (
-                    <Link to={`/student/tests/${test.id}/attempt`} className="btn-primary">Start Test</Link>
+                  {user?.role === 'student' && !hasStudentSubmitted(test) && canTakeTestNow(test) ? (
+                    <Link to={`/student/tests/${test.id}/attempt`} className="btn-primary" onClick={(event) => event.stopPropagation()}>Start Test</Link>
+                  ) : null}
+                  {user?.role === 'student' && hasStudentSubmitted(test) ? (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void openStudentResult(test.id);
+                      }}
+                    >
+                      View Result
+                    </button>
+                  ) : null}
+                  {user?.role === 'student' && !canTakeTestNow(test) && hasTestEnded(test) ? (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void openStudentResult(test.id);
+                      }}
+                    >
+                      View Score
+                    </button>
                   ) : null}
                 </div>
-              </button>
+                {user?.role === 'student' && hasStudentSubmitted(test) ? (
+                  <div className="mt-2 text-xs text-slate-600 md:mt-0">
+                    Score: {Number(test.submission_score || 0)} / {Number(test.submission_total_score || 0)} ({Math.round(Number(test.submission_percentage || 0))}%)
+                  </div>
+                ) : null}
+              </div>
             ))}
+          </div>
+        )}
+
+        {studentResult && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+            <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Your Test Result</p>
+                  <h2 className="mt-1 text-2xl font-bold text-slate-900">{studentResult.test?.title || 'Test'}</h2>
+                </div>
+                <button type="button" className="btn-secondary" onClick={() => setStudentResult(null)}>
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="rounded-2xl bg-slate-50 p-4 text-center">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Score</p>
+                  <p className="mt-1 text-2xl font-bold text-slate-900">
+                    {Number(studentResult.submission?.score || 0)} / {Number(studentResult.submission?.total_score || 0)}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-4 text-center">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Percentage</p>
+                  <p className="mt-1 text-2xl font-bold text-slate-900">{Math.round(Number(studentResult.submission?.percentage || 0))}%</p>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-4 text-center">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Status</p>
+                  <p className="mt-1 text-sm font-bold capitalize text-slate-900">{studentResult.submission?.status || 'submitted'}</p>
+                </div>
+              </div>
+
+              {studentResult.submission?.submitted_at ? (
+                <p className="mt-4 text-sm text-slate-600">Submitted on: {new Date(studentResult.submission.submitted_at).toLocaleString()}</p>
+              ) : null}
+            </div>
           </div>
         )}
 
@@ -450,9 +881,21 @@ const Tests: React.FC = () => {
                         {selectedTest.subjectCode ? ` • ${selectedTest.subjectCode}` : ''}
                       </p>
                     </div>
-                    <button type="button" className="btn-secondary" onClick={() => setSelectedTest(null)}>
-                      Close
-                    </button>
+                    <div className="flex flex-col items-end gap-2">
+                      {(user?.role === 'teacher' || user?.role === 'admin') && !isTeacherEditLocked(selectedTest) ? (
+                        <button type="button" className="btn-secondary" onClick={editSelectedTest}>
+                          Edit Questions
+                        </button>
+                      ) : null}
+                      {(user?.role === 'teacher' || user?.role === 'admin') && selectedTest.status !== 'active' && !isTeacherEditLocked(selectedTest) ? (
+                        <button type="button" className="btn-primary" onClick={() => void startSelectedTest()} disabled={startingTest}>
+                          {startingTest ? 'Starting...' : 'Start Test'}
+                        </button>
+                      ) : null}
+                      <button type="button" className="btn-secondary" onClick={() => setSelectedTest(null)}>
+                        Close
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -545,6 +988,113 @@ const Tests: React.FC = () => {
                       ))}
                     </div>
                   </div>
+
+                  {(user?.role === 'teacher' || user?.role === 'admin') && (
+                    <div className="mt-8 space-y-6 border-t border-slate-200 pt-6">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                        <div className="rounded-2xl bg-teal-50 p-4">
+                          <p className="text-xs uppercase tracking-wide text-teal-700">Submissions</p>
+                          <p className="mt-1 text-2xl font-bold text-slate-900">{testResults?.summary?.totalSubmissions ?? 0}</p>
+                        </div>
+                        <div className="rounded-2xl bg-emerald-50 p-4">
+                          <p className="text-xs uppercase tracking-wide text-emerald-700">Submitted</p>
+                          <p className="mt-1 text-2xl font-bold text-slate-900">{testResults?.summary?.submittedStudents ?? 0}</p>
+                        </div>
+                        <div className="rounded-2xl bg-amber-50 p-4">
+                          <p className="text-xs uppercase tracking-wide text-amber-700">Graded</p>
+                          <p className="mt-1 text-2xl font-bold text-slate-900">{testResults?.summary?.gradedSubmissions ?? 0}</p>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 p-4">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Average %</p>
+                          <p className="mt-1 text-2xl font-bold text-slate-900">{Math.round(testResults?.summary?.averagePercentage || 0)}%</p>
+                        </div>
+                      </div>
+
+                      {resultsLoading ? (
+                        <LoadingState compact message="Loading test results..." />
+                      ) : (
+                        <>
+                          <div>
+                            <h3 className="mb-3 text-lg font-semibold text-slate-900">Student Results</h3>
+                            <div className="space-y-3">
+                              {(testResults?.submissions || []).length > 0 ? (
+                                (testResults?.submissions || []).map((submission: TestSubmissionRow) => (
+                                  <div key={submission.id} className="rounded-2xl border border-slate-200 p-4">
+                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                      <div>
+                                        <p className="text-base font-semibold text-slate-900">
+                                          {submission.firstName || 'Student'} {submission.lastName || ''}
+                                          {submission.rollNumber ? ` • Roll ${submission.rollNumber}` : ''}
+                                        </p>
+                                        <p className="text-sm text-slate-500">{submission.status || 'in_progress'}</p>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-3 text-sm">
+                                        <div className="rounded-xl bg-slate-50 px-3 py-2 text-center">
+                                          <p className="text-xs uppercase text-slate-500">Score</p>
+                                          <p className="font-semibold text-slate-900">{Number(submission.score || 0)} / {Number(submission.totalScore || 0)}</p>
+                                        </div>
+                                        <div className="rounded-xl bg-slate-50 px-3 py-2 text-center">
+                                          <p className="text-xs uppercase text-slate-500">Percentage</p>
+                                          <p className="font-semibold text-slate-900">{Math.round(Number(submission.percentage || 0))}%</p>
+                                        </div>
+                                        <div className="rounded-xl bg-slate-50 px-3 py-2 text-center">
+                                          <p className="text-xs uppercase text-slate-500">Issues</p>
+                                          <p className="font-semibold text-slate-900">{submission.failedQuestions?.length || 0}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {(submission.failedQuestions || []).length > 0 ? (
+                                      <div className="mt-4 rounded-xl bg-rose-50 p-3">
+                                        <p className="text-sm font-semibold text-rose-800">Needs review</p>
+                                        <p className="mt-1 text-sm text-rose-900">
+                                          Questions: {submission.failedQuestions?.map((question) => `Q${question.questionNumber}`).join(', ')}
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <div className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">No failing questions recorded yet.</div>
+                                    )}
+                                  </div>
+                                ))
+                              ) : (
+                                <EmptyState
+                                  title="No submissions yet"
+                                  description="Students will appear here once they complete the test."
+                                />
+                              )}
+                            </div>
+                          </div>
+
+                          {(testAnalytics?.questionAnalytics || []).length > 0 && (
+                            <div>
+                              <h3 className="mb-3 text-lg font-semibold text-slate-900">Question Performance</h3>
+                              <div className="space-y-3">
+                                {testAnalytics.questionAnalytics.map((question: any) => (
+                                  <div key={question.id} className="rounded-2xl border border-slate-200 p-4">
+                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                      <div>
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Question {question.question_number}</p>
+                                        <p className="text-sm text-slate-900">{question.question_text}</p>
+                                      </div>
+                                      <div className="text-sm text-slate-600">
+                                        {Number(question.correct_answers || 0)} correct / {Number(question.total_attempts || 0)} attempts
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 h-2 rounded-full bg-slate-100">
+                                      <div
+                                        className="h-2 rounded-full bg-teal-500"
+                                        style={{ width: `${Math.max(0, Math.min(100, Number(question.success_rate || 0)))}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -628,8 +1178,10 @@ const Tests: React.FC = () => {
               </div>
 
               <div className="mt-6 flex justify-end gap-2">
-                <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-                <button className="btn-primary" onClick={createManualTest}>Create Test</button>
+                <button className="btn-secondary" onClick={() => setShowCreate(false)} disabled={creatingManual}>Cancel</button>
+                <button className="btn-primary" onClick={createManualTest} disabled={creatingManual}>
+                  {creatingManual ? 'Creating...' : 'Create Test'}
+                </button>
               </div>
             </div>
           </div>
@@ -700,6 +1252,14 @@ const Tests: React.FC = () => {
                   </>
                 )}
 
+                <label className="text-sm text-slate-600 md:col-span-2">Question type pattern</label>
+                <div className="md:col-span-2 grid grid-cols-2 gap-2">
+                  <button type="button" className={`btn-secondary ${aiForm.questionMode === 'mcq' ? '!border-teal-500 !text-teal-700' : ''}`} onClick={() => setAiForm({ ...aiForm, questionMode: 'mcq' })}>MCQ Only</button>
+                  <button type="button" className={`btn-secondary ${aiForm.questionMode === 'short_answer' ? '!border-teal-500 !text-teal-700' : ''}`} onClick={() => setAiForm({ ...aiForm, questionMode: 'short_answer' })}>Short Answer Only</button>
+                  <button type="button" className={`btn-secondary ${aiForm.questionMode === 'long_answer' ? '!border-teal-500 !text-teal-700' : ''}`} onClick={() => setAiForm({ ...aiForm, questionMode: 'long_answer' })}>Long Answer Only</button>
+                  <button type="button" className={`btn-secondary ${aiForm.questionMode === 'mix' ? '!border-teal-500 !text-teal-700' : ''}`} onClick={() => setAiForm({ ...aiForm, questionMode: 'mix' })}>Mix (MCQ + Short)</button>
+                </div>
+
                 <input className="input-base md:col-span-2" placeholder="Quiz title" value={aiForm.title} onChange={(e) => setAiForm({ ...aiForm, title: e.target.value })} />
 
                 {aiSource === 'pdf' && (
@@ -722,8 +1282,192 @@ const Tests: React.FC = () => {
                 </select>
               </div>
               <div className="mt-6 flex justify-end gap-2">
-                <button className="btn-secondary" onClick={() => setShowAiCreate(false)}>Cancel</button>
-                <button className="btn-primary" onClick={createAiTest}>Generate</button>
+                <button className="btn-secondary" onClick={() => setShowAiCreate(false)} disabled={generatingAi}>Cancel</button>
+                <button className="btn-primary" onClick={createAiTest} disabled={generatingAi}>
+                  {generatingAi ? 'Generating...' : 'Generate'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {reviewTest && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+            <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Review AI Generated Test</p>
+                  <h2 className="mt-1 text-2xl font-bold text-slate-900">{reviewTest.title}</h2>
+                  <p className="mt-1 text-sm text-slate-600">Please review the questions below. Make any necessary changes before publishing.</p>
+                </div>
+                <button type="button" className="btn-secondary" onClick={() => {
+                  setReviewTest(null);
+                  setReviewQuestions([]);
+                  setReviewStep('edit');
+                }}>
+                  Close
+                </button>
+              </div>
+
+              <div className="mb-6 rounded-2xl bg-amber-50 p-4 border border-amber-200">
+                <p className="text-sm font-semibold text-amber-900">📋 Review Checklist</p>
+                <ul className="mt-2 space-y-1 text-sm text-amber-800">
+                  <li>✓ Questions are relevant to the topic/chapter</li>
+                  <li>✓ Multiple choice options are distinct and plausible</li>
+                  <li>✓ No repeated concepts across questions</li>
+                  <li>✓ Language is appropriate for the class level</li>
+                  <li>✓ Correct answers are accurate</li>
+                </ul>
+              </div>
+
+              <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Questions</p>
+                  <p className="mt-1 text-2xl font-bold text-slate-900">{reviewQuestions.length || reviewTest.total_questions || reviewTest.questions?.length || 0}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Difficulty</p>
+                  <p className="mt-1 text-2xl font-bold capitalize text-slate-900">{reviewTest.difficulty || 'mixed'}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Source</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900">{reviewTest.description?.includes('PDF') ? 'PDF Notes' : 'Syllabus'}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Status</p>
+                  <p className="mt-1 text-sm font-bold capitalize text-amber-700">{reviewTest.status || 'draft'}</p>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                {reviewStep === 'edit' ? (
+                  <>
+                    <div className="mb-4 flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-slate-900">Question Editor</h3>
+                      <button type="button" className="btn-secondary" onClick={addReviewQuestion}>Generate More (Add Blank)</button>
+                    </div>
+                    <div className="space-y-3">
+                      {reviewQuestions.map((question: any, questionIndex: number) => (
+                        <div key={question.id || questionIndex} className="rounded-2xl border border-slate-200 p-4">
+                          <div className="mb-3 flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Question {question.questionNumber}</p>
+                            </div>
+                            {reviewQuestions.length > 1 ? (
+                              <button type="button" className="text-sm text-rose-600" onClick={() => removeReviewQuestion(questionIndex)}>Remove</button>
+                            ) : null}
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-3">
+                            <textarea
+                              className="input-base min-h-[90px]"
+                              value={question.questionText}
+                              onChange={(event) => updateReviewQuestion(questionIndex, { questionText: event.target.value })}
+                              placeholder="Question text"
+                            />
+                            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                              <select className="input-base" value={question.questionType} onChange={(event) => updateReviewQuestion(questionIndex, { questionType: event.target.value as ReviewQuestion['questionType'] })}>
+                                <option value="mcq">MCQ</option>
+                                <option value="short_answer">Short Answer</option>
+                                <option value="long_answer">Long Answer</option>
+                                <option value="true_false">True / False</option>
+                              </select>
+                              <select className="input-base" value={question.difficulty} onChange={(event) => updateReviewQuestion(questionIndex, { difficulty: event.target.value as ReviewQuestion['difficulty'] })}>
+                                <option value="easy">Easy</option>
+                                <option value="medium">Medium</option>
+                                <option value="hard">Hard</option>
+                              </select>
+                              <input className="input-base" type="number" min={1} value={question.points} onChange={(event) => updateReviewQuestion(questionIndex, { points: Number(event.target.value) })} />
+                              <input className="input-base" value={question.correctAnswer} onChange={(event) => updateReviewQuestion(questionIndex, { correctAnswer: event.target.value })} placeholder="Correct answer" />
+                            </div>
+
+                            {question.questionType === 'mcq' ? (
+                              <div className="grid gap-2">
+                                {question.options.map((option: any, optionIndex: number) => (
+                                  <div key={`${questionIndex}-${optionIndex}`} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2">
+                                    <input
+                                      type="radio"
+                                      name={`review-correct-${questionIndex}`}
+                                      checked={option.isCorrect}
+                                      onChange={() => {
+                                        const updatedOptions = question.options.map((item: any, currentIndex: number) => ({
+                                          ...item,
+                                          isCorrect: currentIndex === optionIndex
+                                        }));
+                                        updateReviewQuestion(questionIndex, { options: updatedOptions });
+                                      }}
+                                    />
+                                    <input
+                                      className="input-base flex-1"
+                                      value={option.optionText}
+                                      onChange={(event) => updateReviewOption(questionIndex, optionIndex, { optionText: event.target.value })}
+                                      placeholder={`Option ${optionIndex + 1}`}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 p-5">
+                    <h3 className="text-lg font-semibold text-slate-900">Schedule Test Details</h3>
+                    <p className="mt-1 text-sm text-slate-600">Set timing and rules before publishing this test to students.</p>
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <label className="text-sm text-slate-600">Start Time</label>
+                      <input className="input-base" type="datetime-local" value={reviewSchedule.startTime} onChange={(event) => setReviewSchedule({ ...reviewSchedule, startTime: event.target.value })} />
+                      <label className="text-sm text-slate-600">End Time</label>
+                      <input className="input-base" type="datetime-local" value={reviewSchedule.endTime} onChange={(event) => setReviewSchedule({ ...reviewSchedule, endTime: event.target.value })} />
+                      <label className="text-sm text-slate-600">Duration (minutes)</label>
+                      <input className="input-base" type="number" min={1} value={reviewSchedule.durationMinutes} onChange={(event) => setReviewSchedule({ ...reviewSchedule, durationMinutes: Number(event.target.value) })} />
+                      <label className="text-sm text-slate-600">Passing Score</label>
+                      <input className="input-base" type="number" min={0} value={reviewSchedule.passingScore} onChange={(event) => setReviewSchedule({ ...reviewSchedule, passingScore: Number(event.target.value) })} />
+                      <label className="text-sm text-slate-600 md:col-span-2">Instructions</label>
+                      <textarea className="input-base md:col-span-2 min-h-[90px]" value={reviewSchedule.instructions} onChange={(event) => setReviewSchedule({ ...reviewSchedule, instructions: event.target.value })} placeholder="Test instructions for students" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-4 border-t border-slate-200 pt-6">
+                <div className="rounded-2xl bg-teal-50 p-4">
+                  <label className="flex items-center gap-3">
+                    <input type="checkbox" defaultChecked className="h-4 w-4" />
+                    <span className="text-sm font-medium text-teal-900">
+                      {reviewStep === 'edit'
+                        ? 'I have reviewed all questions and want to proceed to scheduling'
+                        : 'I confirm the schedule and settings are correct for publishing'}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  {reviewStep === 'schedule' ? (
+                    <button type="button" className="btn-secondary" onClick={() => setReviewStep('edit')}>
+                      Back to Questions
+                    </button>
+                  ) : (
+                    <button type="button" className="btn-secondary" onClick={() => {
+                      setReviewTest(null);
+                      setReviewQuestions([]);
+                      setReviewStep('edit');
+                    }}>
+                      Back to Edit
+                    </button>
+                  )}
+                  {reviewStep === 'edit' ? (
+                    <button type="button" className="btn-primary" onClick={proceedToSchedule}>
+                      Proceed to Schedule
+                    </button>
+                  ) : (
+                    <button type="button" className="btn-primary" onClick={() => void publishReviewTest()} disabled={savingReview}>
+                      {savingReview ? 'Saving & Publishing...' : 'Save Changes & Publish Test'}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
