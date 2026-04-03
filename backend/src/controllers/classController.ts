@@ -31,10 +31,10 @@ export const getAllClasses = async (req: AuthRequest, res: Response) => {
     const { teacherId, academicYear } = req.query;
 
     let queryText = `
-      SELECT c.*,
-             u.first_name as teacher_first_name,
-             u.last_name as teacher_last_name,
-             COUNT(DISTINCT e.student_id) as student_count
+            SELECT c.id, c.name, c.grade, c.section, c.academic_year as academicYear, c.teacher_id as teacherId, c.room_number as roomNumber,
+              u.first_name as teacherFirstName,
+              u.last_name as teacherLastName,
+              COUNT(DISTINCT e.student_id) as studentCount
       FROM classes c
       LEFT JOIN users u ON c.teacher_id = u.id
       LEFT JOIN enrollments e ON c.id = e.class_id AND e.status = 'active'
@@ -70,11 +70,11 @@ export const getClassById = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
 
     const result = await query(
-      `SELECT c.*,
-              u.first_name as teacher_first_name,
-              u.last_name as teacher_last_name,
-              u.email as teacher_email,
-              COUNT(DISTINCT e.student_id) as student_count
+      `SELECT c.id, c.name, c.grade, c.section, c.academic_year as academicYear, c.teacher_id as teacherId, c.room_number as roomNumber,
+              u.first_name as teacherFirstName,
+              u.last_name as teacherLastName,
+              u.email as teacherEmail,
+              COUNT(DISTINCT e.student_id) as studentCount
        FROM classes c
        LEFT JOIN users u ON c.teacher_id = u.id
        LEFT JOIN enrollments e ON c.id = e.class_id AND e.status = 'active'
@@ -147,8 +147,8 @@ export const getClassStudents = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
 
     const result = await query(
-      `SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.profile_image,
-              e.roll_number, e.enrollment_date, e.status as enrollment_status
+      `SELECT u.id, u.email, u.first_name as firstName, u.last_name as lastName, u.phone, u.profile_image as profileImage,
+              e.roll_number as rollNumber, e.enrollment_date as enrollmentDate, e.status as enrollmentStatus
        FROM users u
        JOIN enrollments e ON u.id = e.student_id
        WHERE e.class_id = $1 AND u.role = 'student'
@@ -167,7 +167,7 @@ export const getClassStudents = async (req: AuthRequest, res: Response) => {
 
 export const getSubjects = async (req: AuthRequest, res: Response) => {
   try {
-    const result = await query('SELECT * FROM subjects ORDER BY name');
+    const result = await query('SELECT id, name, code, description FROM subjects ORDER BY name');
 
     res.json({
       subjects: result.rows

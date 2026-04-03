@@ -54,9 +54,9 @@ export const getAllStudents = async (req: AuthRequest, res: Response) => {
     const { classId, search } = req.query;
 
     let queryText = `
-      SELECT DISTINCT u.id, u.email, u.first_name, u.last_name, u.phone, u.profile_image, u.created_at,
-             e.roll_number, e.status as enrollment_status,
-             c.id as class_id, c.name as class_name, c.grade, c.section
+          SELECT DISTINCT u.id, u.email, u.first_name as firstName, u.last_name as lastName, u.phone, u.profile_image as profileImage, u.created_at as createdAt,
+            e.roll_number as rollNumber, e.status as enrollmentStatus,
+            c.id as classId, c.name as className, c.grade, c.section
       FROM users u
       LEFT JOIN enrollments e ON u.id = e.student_id
       LEFT JOIN classes c ON e.class_id = c.id
@@ -111,18 +111,18 @@ export const getStudentById = async (req: AuthRequest, res: Response) => {
       student: {
         id: student.id,
         email: student.email,
-        firstName: student.first_name,
-        lastName: student.last_name,
+        firstName: student.firstname || student.firstName,
+        lastName: student.lastname || student.lastName,
         phone: student.phone,
-        profileImage: student.profile_image,
-        rollNumber: student.roll_number,
-        enrollmentStatus: student.enrollment_status,
+        profileImage: student.profileimage || student.profileImage,
+        rollNumber: student.rollnumber || student.rollNumber,
+        enrollmentStatus: student.enrollmentstatus || student.enrollmentStatus,
         enrollmentDate: student.enrollment_date,
-        classId: student.class_id,
-        className: student.class_name,
+        classId: student.classid || student.classId,
+        className: student.classname || student.className,
         grade: student.grade,
         section: student.section,
-        createdAt: student.created_at
+        createdAt: student.createdat || student.createdAt
       }
     });
   } catch (error) {
@@ -172,7 +172,7 @@ export const deleteStudent = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
 
     const result = await query(
-      'DELETE FROM users WHERE id = $1 AND role = $\'student\' RETURNING id',
+      "DELETE FROM users WHERE id = $1 AND role = 'student' RETURNING id",
       [id]
     );
 
