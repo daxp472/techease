@@ -12,6 +12,7 @@ interface GenerateQuizParams {
   numQuestions: number;
   difficulty: 'easy' | 'medium' | 'hard';
   questionTypes: string[];
+  audienceContext?: string;
 }
 
 interface GeneratedOption {
@@ -29,6 +30,48 @@ interface GeneratedQuestion {
   difficulty: 'easy' | 'medium' | 'hard';
   options?: GeneratedOption[];
 }
+
+const dedupeQuestions = (questions: GeneratedQuestion[], maxCount: number): GeneratedQuestion[] => {
+  const seen = new Set<string>();
+  const deduped: GeneratedQuestion[] = [];
+
+  for (const question of questions) {
+    const normalized = String(question?.questionText || '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    deduped.push(question);
+    if (deduped.length >= maxCount) {
+      break;
+    }
+  }
+
+  return deduped.map((question, index) => ({
+    ...question,
+    questionNumber: index + 1
+  }));
+};
+
+const ensureQuestionCount = (
+  primaryQuestions: GeneratedQuestion[],
+  requestedCount: number,
+  params: GenerateQuizParams
+): GeneratedQuestion[] => {
+  const dedupedPrimary = dedupeQuestions(primaryQuestions, requestedCount);
+  if (dedupedPrimary.length >= requestedCount) {
+    return dedupedPrimary.slice(0, requestedCount);
+  }
+
+  const supplemental = buildFallbackQuiz(params).questions || [];
+  const merged = dedupeQuestions([...dedupedPrimary, ...supplemental], requestedCount);
+  return merged.slice(0, requestedCount);
+};
 
 const toContentLines = (content: string): string[] => {
   const cleaned = content.replace(/\s+/g, ' ').trim();
@@ -49,23 +92,59 @@ const toContentLines = (content: string): string[] => {
   return byLine.length > 0 ? byLine : ['General learning content from provided material'];
 };
 
+const extractSeeds = (content: string): string[] => {
+  const seeds = new Set<string>();
+
+  const chapterMatch = content.match(/Target Chapter\/Unit:\s*(.+?)(?:\s*Syllabus Topic Context:|$)/is);
+  if (chapterMatch?.[1]) {
+    const chapter = chapterMatch[1].trim();
+    if (chapter) {
+      seeds.add(chapter.replace(/^[:\-\s]+|[:\-\s]+$/g, ''));
+    }
+  }
+
+  const topicMatches = Array.from(content.matchAll(/Topic\s*\d+:\s*([^\[]+?)(?:\s*\[|$)/gi));
+  topicMatches.forEach((match) => {
+    const topic = match[1]?.trim();
+    if (topic) {
+      seeds.add(topic.replace(/^[:\-\s]+|[:\-\s]+$/g, ''));
+    }
+  });
+
+  toContentLines(content).forEach((line) => {
+    const cleanedLine = line
+      .replace(/Target Chapter\/Unit:/gi, '')
+      .replace(/Syllabus Topic Context:/gi, '')
+      .replace(/\[covered\]/gi, '')
+      .trim();
+
+    if (cleanedLine.length > 8) {
+      seeds.add(cleanedLine);
+    }
+  });
+
+  return Array.from(seeds).filter((seed) => seed.length > 0).slice(0, 12);
+};
+
 const buildFallbackQuiz = ({ content, numQuestions, difficulty, questionTypes }: GenerateQuizParams) => {
   const allowedTypes = (Array.isArray(questionTypes) && questionTypes.length > 0
     ? questionTypes
     : ['mcq']) as Array<'mcq' | 'short_answer' | 'long_answer' | 'true_false'>;
 
-  const lines = toContentLines(content);
+  const lines = extractSeeds(content);
   const totalQuestions = Math.max(1, Number(numQuestions) || 10);
 
   const questions: GeneratedQuestion[] = Array.from({ length: totalQuestions }, (_, index) => {
     const questionType = allowedTypes[index % allowedTypes.length] || 'mcq';
-    const base = lines[index % lines.length];
+    const base = lines[index % lines.length] || 'the provided learning material';
     const questionNumber = index + 1;
+    const variant = Math.floor(index / Math.max(1, lines.length)) + 1;
+    const suffix = variant > 1 ? ` (variation ${variant})` : '';
 
     if (questionType === 'true_false') {
       return {
         questionNumber,
-        questionText: `${base}. True or False?`,
+        questionText: `True or false: ${base} is an important idea in this lesson${suffix}.`,
         questionType,
         correctAnswer: 'true',
         points: 1,
@@ -76,9 +155,9 @@ const buildFallbackQuiz = ({ content, numQuestions, difficulty, questionTypes }:
     if (questionType === 'short_answer' || questionType === 'long_answer') {
       return {
         questionNumber,
-        questionText: `Explain this concept in your own words: ${base}`,
+        questionText: `Explain ${base} in your own words${suffix}.`,
         questionType,
-        correctAnswer: base,
+        correctAnswer: `A clear explanation of ${base}${suffix}.`,
         points: questionType === 'long_answer' ? 2 : 1,
         difficulty
       };
@@ -86,22 +165,22 @@ const buildFallbackQuiz = ({ content, numQuestions, difficulty, questionTypes }:
 
     return {
       questionNumber,
-      questionText: `Which option best matches this concept: ${base}?`,
+      questionText: `Which option best describes ${base}${suffix}?`,
       questionType: 'mcq',
       correctAnswer: '1',
       points: 1,
       difficulty,
       options: [
-        { optionNumber: 1, optionText: base, isCorrect: true },
-        { optionNumber: 2, optionText: `Not related to: ${base.slice(0, 40)}`, isCorrect: false },
-        { optionNumber: 3, optionText: 'Only partially correct statement', isCorrect: false },
+        { optionNumber: 1, optionText: `It is a core idea connected to ${base}.`, isCorrect: true },
+        { optionNumber: 2, optionText: `It is unrelated to ${base}.`, isCorrect: false },
+        { optionNumber: 3, optionText: `It is only a minor detail about ${base}.`, isCorrect: false },
         { optionNumber: 4, optionText: 'None of the above', isCorrect: false }
       ]
     };
   });
 
   return {
-    questions,
+    questions: dedupeQuestions(questions, totalQuestions),
     meta: {
       source: 'fallback',
       reason: 'Gemini service unavailable or quota exhausted'
@@ -158,7 +237,8 @@ export const generateQuizFromContent = async ({
   title,
   numQuestions,
   difficulty,
-  questionTypes
+  questionTypes,
+  audienceContext
 }: GenerateQuizParams) => {
   try {
     if (!GEMINI_API_KEY) {
@@ -167,24 +247,36 @@ export const generateQuizFromContent = async ({
 
     const modelName = await resolveGeminiModel();
 
-    const prompt = `You are an expert educational assessment creator. Generate a quiz based on the following content.
+    const prompt = `You are an expert educator and assessment creator. Generate high-quality, contextually-relevant quiz questions.
 
-Title: ${title}
-Number of Questions: ${numQuestions}
-Difficulty: ${difficulty}
-Question Types: ${questionTypes.join(', ')}
+Quiz Title: ${title}
+Number of Questions Required: ${numQuestions}
+Difficulty Level: ${difficulty}
+Question Types Needed: ${questionTypes.join(', ')}
 
-Source Content:
+${audienceContext ? `Context Information:\n${audienceContext}\n` : ''}Source Material:
 ${content}
 
-Instructions:
-1. Generate exactly ${numQuestions} high-quality questions
-2. Questions should be relevant to the content
-3. Mix question types as requested
-4. For MCQ, provide 4 options with one correct answer
-5. For true/false, provide correct answer
-6. For short answer, provide expected answer
-7. Return ONLY valid JSON in this exact format:
+Generation Rules (CRITICAL):
+1. Generate EXACTLY ${numQuestions} questions - no more, no less
+2. Each question MUST be directly derived from the source material or context
+3. DO NOT repeat the same concept or phrasing across different questions
+4. For Multiple Choice (MCQ):
+   - Create 4 distinct, plausible options
+   - Exactly ONE option must be correct
+   - Incorrect options should be realistic distractors, not obviously wrong
+5. For True/False:
+   - Create statements that test understanding of key concepts
+   - Answer must be clearly TRUE or FALSE
+6. For Short Answer:
+   - Questions should require 1-3 sentence answers
+   - Provide a key phrase or concise expected answer
+7. For Long Answer:
+   - Questions should require 3-5 sentence explanations
+   - Provide a detailed but concise expected answer
+8. Match language complexity to the target grade level - keep it simple and clear
+9. Avoid trivial or memorization-only questions; prioritize understanding and application
+10. Return ONLY valid, well-formed JSON with absolutely no markdown formatting, code blocks, or extra text:
 {
   "questions": [
     {
@@ -247,7 +339,23 @@ Instructions:
       throw new Error('Invalid quiz format generated');
     }
 
-    return parsedQuiz;
+    const requestedCount = Math.max(1, Number(numQuestions) || 10);
+    const dedupedQuestions = ensureQuestionCount(parsedQuiz.questions, requestedCount, {
+      content,
+      title,
+      numQuestions: requestedCount,
+      difficulty,
+      questionTypes
+    });
+
+    if (dedupedQuestions.length === 0) {
+      throw new Error('AI generated duplicate/invalid questions only. Please try again.');
+    }
+
+    return {
+      ...parsedQuiz,
+      questions: dedupedQuestions
+    };
   } catch (error: any) {
     const message = String(error?.message || 'Failed to generate quiz');
     console.error('Error generating quiz with Gemini:', message);
