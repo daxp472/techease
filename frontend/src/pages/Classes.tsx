@@ -1,12 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
 import { classAPI } from '../services/api';
 import { Class } from '../types';
-import { Plus, Users } from 'lucide-react';
+import { Plus, Users, Eye } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import SearchInput from '../components/ui/SearchInput';
+import LoadingState from '../components/ui/LoadingState';
+import EmptyState from '../components/ui/EmptyState';
+import { useToast } from '../components/ui/ToastContext';
+import { Link } from 'react-router-dom';
 
 const Classes: React.FC = () => {
   const [classes, setClasses] = useState<Class[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { showToast } = useToast();
 
   const [formData, setFormData] = useState({
     name: '',
@@ -22,10 +31,13 @@ const Classes: React.FC = () => {
 
   const fetchClasses = async () => {
     try {
+      setLoading(true);
       const response = await classAPI.getAll();
       setClasses(response.data.classes);
     } catch (error) {
-      console.error('Error fetching classes:', error);
+      showToast('Error fetching classes', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -36,8 +48,9 @@ const Classes: React.FC = () => {
       setShowModal(false);
       fetchClasses();
       resetForm();
+      showToast('Class created successfully', 'success');
     } catch (error) {
-      alert('Error creating class');
+      showToast('Error creating class', 'error');
     }
   };
 
@@ -51,54 +64,75 @@ const Classes: React.FC = () => {
     });
   };
 
+  const filteredClasses = useMemo(
+    () => classes.filter((cls) => `${cls.name} ${cls.grade} ${cls.section}`.toLowerCase().includes(search.toLowerCase())),
+    [classes, search]
+  );
+
   return (
     <Layout>
       <div>
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Classes</h1>
-          <button
-            onClick={() => {
-              resetForm();
-              setShowModal(true);
-            }}
-            className="flex items-center bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700"
-          >
-            <Plus size={20} className="mr-2" />
-            Add Class
-          </button>
+        <PageHeader
+          title="Classes"
+          description="Organize classes, sections, and teacher assignments"
+          actions={
+            <button
+              onClick={() => {
+                resetForm();
+                setShowModal(true);
+              }}
+              className="btn-primary"
+            >
+              <Plus size={18} className="mr-2" />
+              Add Class
+            </button>
+          }
+        />
+
+        <div className="card mb-6 p-4">
+          <SearchInput value={search} onChange={setSearch} placeholder="Search class by name, grade, or section" />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {classes.map((cls) => (
-            <div key={cls.id} className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-xl font-bold text-gray-900">{cls.name}</h3>
-                  <p className="text-gray-600">
-                    Grade {cls.grade} - Section {cls.section}
-                  </p>
-                </div>
-              </div>
-              <div className="space-y-2 text-sm text-gray-600">
-                <div className="flex items-center">
-                  <Users size={16} className="mr-2" />
-                  <span>{cls.studentCount || 0} Students</span>
-                </div>
-                {cls.roomNumber && (
-                  <div>Room: {cls.roomNumber}</div>
-                )}
-                {cls.teacherFirstName && (
+        {loading ? (
+          <LoadingState compact message="Loading classes..." />
+        ) : filteredClasses.length === 0 ? (
+          <EmptyState title="No classes found" description="Add a class or adjust your search." />
+        ) : (
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {filteredClasses.map((cls) => (
+              <Link key={cls.id} to={`/classes/${cls.id}`} className="card p-6 block transition hover:-translate-y-0.5 hover:shadow-lg">
+                <div className="mb-4 flex items-start justify-between">
                   <div>
-                    Teacher: {cls.teacherFirstName} {cls.teacherLastName}
+                    <h3 className="text-xl font-bold text-gray-900">{cls.name}</h3>
+                    <p className="text-gray-600">
+                      Grade {cls.grade} - Section {cls.section}
+                    </p>
                   </div>
-                )}
-                <div className="pt-2 border-t">
-                  Academic Year: {cls.academicYear}
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
+                <div className="space-y-2 text-sm text-gray-600">
+                  <div className="flex items-center">
+                    <Users size={16} className="mr-2" />
+                    <span>{cls.studentCount || 0} Students</span>
+                  </div>
+                  {cls.roomNumber && (
+                    <div>Room: {cls.roomNumber}</div>
+                  )}
+                  {cls.teacherFirstName && (
+                    <div>
+                      Teacher: {cls.teacherFirstName} {cls.teacherLastName}
+                    </div>
+                  )}
+                  <div className="border-t pt-2">
+                    Academic Year: {cls.academicYear}
+                  </div>
+                </div>
+                <div className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-teal-700">
+                  Open class <Eye size={14} />
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
 
         {showModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

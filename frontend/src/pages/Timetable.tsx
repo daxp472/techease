@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
-import { timetableAPI } from '../services/api';
+import { timetableAPI, studentAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Timetable as TimetableType } from '../types';
+import LoadingState from '../components/ui/LoadingState';
+import EmptyState from '../components/ui/EmptyState';
+import PageHeader from '../components/ui/PageHeader';
 
 const Timetable: React.FC = () => {
   const { user } = useAuth();
@@ -18,6 +21,13 @@ const Timetable: React.FC = () => {
       if (user?.role === 'teacher') {
         const response = await timetableAPI.getByTeacher();
         setTimetable(response.data.timetable);
+      } else if (user?.role === 'student') {
+        const studentRes = await studentAPI.getById(user.id);
+        const classId = studentRes.data.student?.classId;
+        if (classId) {
+          const response = await timetableAPI.getByClass(classId);
+          setTimetable(response.data.timetable);
+        }
       }
     } catch (error) {
       console.error('Error fetching timetable:', error);
@@ -47,9 +57,7 @@ const Timetable: React.FC = () => {
   if (loading) {
     return (
       <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-gray-600">Loading...</div>
-        </div>
+        <LoadingState message="Loading timetable..." />
       </Layout>
     );
   }
@@ -57,11 +65,11 @@ const Timetable: React.FC = () => {
   return (
     <Layout>
       <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">My Timetable</h1>
+        <PageHeader title="My Timetable" description="Weekly teaching schedule at a glance" />
 
         <div className="space-y-6">
           {[1, 2, 3, 4, 5].map((day) => (
-            <div key={day} className="bg-white rounded-lg shadow">
+            <div key={day} className="card">
               <div className="px-6 py-4 bg-primary-50 border-b border-primary-100">
                 <h2 className="text-xl font-semibold text-primary-900">
                   {getDayName(day)}
@@ -97,7 +105,7 @@ const Timetable: React.FC = () => {
                       ))}
                   </div>
                 ) : (
-                  <p className="text-gray-500 text-center py-4">No classes scheduled</p>
+                  <EmptyState title="No classes scheduled" description="Enjoy the free slot or update your timetable." />
                 )}
               </div>
             </div>
