@@ -12,6 +12,8 @@ import attendanceRoutes from './routes/attendanceRoutes';
 import gradeRoutes from './routes/gradeRoutes';
 import timetableRoutes from './routes/timetableRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
+import syllabusRoutes from './routes/syllabusRoutes';
+import testRoutes from './routes/testRoutes';
 
 dotenv.config();
 
@@ -33,7 +35,9 @@ app.get('/', (req, res) => {
       attendance: '/api/attendance',
       grades: '/api/grades',
       timetable: '/api/timetable',
-      analytics: '/api/analytics'
+      analytics: '/api/analytics',
+      syllabus: '/api/syllabus',
+      tests: '/api/tests'
     }
   });
 });
@@ -45,6 +49,8 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/grades', gradeRoutes);
 app.use('/api/timetable', timetableRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/syllabus', syllabusRoutes);
+app.use('/api/tests', testRoutes);
 
 app.use(errorHandler);
 
