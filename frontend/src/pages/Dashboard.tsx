@@ -9,6 +9,19 @@ import LoadingState from '../components/ui/LoadingState';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 
+const toNumber = (value: unknown) => Number(value || 0);
+
+const normalizeDashboardStats = (payload: any): DashboardStats => ({
+  totalClasses: toNumber(payload.totalClasses ?? payload.total_classes),
+  totalStudents: toNumber(payload.totalStudents ?? payload.total_students),
+  todaysClasses: toNumber(payload.todaysClasses ?? payload.todays_classes ?? payload.today_classes),
+  attendanceMarkedToday: toNumber(payload.attendanceMarkedToday ?? payload.attendance_marked_today ?? payload.records_today),
+  enrolledClasses: toNumber(payload.enrolledClasses ?? payload.enrolled_classes),
+  attendancePercentage: toNumber(payload.attendancePercentage ?? payload.attendance_percentage),
+  averageGrade: toNumber(payload.averageGrade ?? payload.average_grade),
+  totalTeachers: toNumber(payload.totalTeachers ?? payload.total_teachers)
+});
+
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({});
@@ -22,19 +35,13 @@ const Dashboard: React.FC = () => {
   const fetchDashboardData = async () => {
     try {
       const statsRes = await analyticsAPI.getDashboardStats();
-      const stats = statsRes.data.stats || {
-        totalClasses: 0,
-        totalStudents: 0,
-        todaysClasses: 0,
-        attendanceMarkedToday: 0
-      };
-      setStats(stats);
+      setStats(normalizeDashboardStats(statsRes.data));
 
       if (user?.role === 'teacher') {
         const timetableRes = await timetableAPI.getByTeacher();
         const today = new Date().getDay();
         const todaysSchedule = timetableRes.data.timetable.filter(
-          (item: Timetable) => item.dayOfWeek === today
+          (item: Timetable) => Number(item.dayOfWeek) === today
         );
         setTodaysTimetable(todaysSchedule);
       }

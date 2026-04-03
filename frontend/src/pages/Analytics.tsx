@@ -7,6 +7,43 @@ import PageHeader from '../components/ui/PageHeader';
 import LoadingState from '../components/ui/LoadingState';
 import EmptyState from '../components/ui/EmptyState';
 
+const normalizeAnalytics = (payload: any) => ({
+  attendanceStats: {
+    totalStudents: Number(payload.attendanceStats?.totalStudents ?? payload.attendanceStats?.total_students ?? 0),
+    totalAttendanceRecords: Number(payload.attendanceStats?.totalAttendanceRecords ?? payload.attendanceStats?.total_attendance_records ?? 0),
+    totalPresent: Number(payload.attendanceStats?.totalPresent ?? payload.attendanceStats?.total_present ?? 0),
+    totalAbsent: Number(payload.attendanceStats?.totalAbsent ?? payload.attendanceStats?.total_absent ?? 0),
+    attendancePercentage: Number(payload.attendanceStats?.attendancePercentage ?? payload.attendanceStats?.attendance_percentage ?? 0)
+  },
+  gradeDistribution: (payload.gradeDistribution || []).map((row: any) => ({
+    grade: row.grade,
+    count: Number(row.count ?? 0)
+  })),
+  subjectWisePerformance: (payload.subjectWisePerformance || []).map((row: any) => ({
+    subjectName: row.subjectName ?? row.subject_name,
+    averagePercentage: Number(row.averagePercentage ?? row.average_percentage ?? 0),
+    totalAssessments: Number(row.totalAssessments ?? row.total_assessments ?? 0)
+  })),
+  topPerformers: (payload.topPerformers || []).map((row: any) => ({
+    id: Number(row.id),
+    firstName: row.firstName ?? row.first_name,
+    lastName: row.lastName ?? row.last_name,
+    rollNumber: row.rollNumber ?? row.roll_number,
+    averagePercentage: Number(row.averagePercentage ?? row.average_percentage ?? 0)
+  })),
+  weakStudents: (payload.weakStudents || []).map((row: any) => ({
+    id: Number(row.id),
+    firstName: row.firstName ?? row.first_name,
+    lastName: row.lastName ?? row.last_name,
+    rollNumber: row.rollNumber ?? row.roll_number,
+    averagePercentage: Number(row.averagePercentage ?? row.average_percentage ?? 0)
+  })),
+  monthlyTrend: (payload.monthlyTrend || []).map((row: any) => ({
+    month: row.month,
+    average_percentage: Number(row.average_percentage ?? row.averagePercentage ?? 0)
+  }))
+});
+
 const Analytics: React.FC = () => {
   const [classes, setClasses] = useState<Class[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>('');
@@ -36,7 +73,7 @@ const Analytics: React.FC = () => {
     try {
       setLoading(true);
       const response = await analyticsAPI.getClassAnalytics(parseInt(selectedClass));
-      setAnalytics(response.data);
+      setAnalytics(normalizeAnalytics(response.data));
     } catch (error) {
       console.error('Error fetching analytics:', error);
     } finally {
