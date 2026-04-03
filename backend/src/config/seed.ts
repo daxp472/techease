@@ -149,12 +149,70 @@ export const seedDatabase = async () => {
        ON CONFLICT (syllabus_id, topic_number) DO NOTHING`
     );
 
-    // Seed one scheduled test with questions
+    // Seed grades for demo students (idempotent) including Bob for report generation showcase
+    await pool.query(
+      `INSERT INTO grades (student_id, class_id, subject_id, exam_type_id, marks_obtained, max_marks, grade, exam_date, entered_by)
+       SELECT
+         u.id,
+         c.id,
+         s.id,
+         et.id,
+         g.marks_obtained,
+         g.max_marks,
+         CASE
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 90 THEN 'A+'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 80 THEN 'A'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 70 THEN 'B+'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 60 THEN 'B'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 50 THEN 'C'
+           WHEN (g.marks_obtained / NULLIF(g.max_marks, 0)) * 100 >= 40 THEN 'D'
+           ELSE 'F'
+         END,
+         g.exam_date,
+         $1
+       FROM (
+         VALUES
+           ('student1@demo.com', '10', 'A', 'MATH', 'Final Exam', 509.00, 550.00, CURRENT_DATE - INTERVAL '10 days'),
+           ('student2@demo.com', '10', 'A', 'MATH', 'Final Exam', 486.00, 550.00, CURRENT_DATE - INTERVAL '10 days'),
+           ('student2@demo.com', '10', 'A', 'SCI', 'Unit Test', 44.00, 50.00, CURRENT_DATE - INTERVAL '18 days'),
+           ('student3@demo.com', '10', 'A', 'MATH', 'Unit Test', 39.00, 50.00, CURRENT_DATE - INTERVAL '20 days'),
+           ('student6@demo.com', '10', 'B', 'SCI', 'Final Exam', 470.00, 550.00, CURRENT_DATE - INTERVAL '12 days')
+       ) AS g(email, grade, section, subject_code, exam_type_name, marks_obtained, max_marks, exam_date)
+       JOIN users u ON u.email = g.email
+       JOIN classes c ON c.grade = g.grade AND c.section = g.section AND c.academic_year = '2024-2025'
+       JOIN subjects s ON s.code = g.subject_code
+       JOIN exam_types et ON LOWER(et.name) = LOWER(g.exam_type_name)
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM grades existing
+         WHERE existing.student_id = u.id
+           AND existing.class_id = c.id
+           AND existing.subject_id = s.id
+           AND existing.exam_type_id = et.id
+           AND existing.exam_date = g.exam_date::date
+       )`,
+      [teacherId]
+    );
+
+    // Seed showcase tests (scheduled, active, completed) without creating duplicates
     await pool.query(
       `INSERT INTO tests (class_id, subject_id, teacher_id, title, description, total_questions, test_type, status, start_time, end_time)
-       VALUES
-         (1, 1, 1, 'Algebra Readiness Test', 'Quick diagnostic for Algebra fundamentals', 3, 'manual', 'scheduled', NOW() + INTERVAL '1 day', NOW() + INTERVAL '1 day 1 hour')
-       ON CONFLICT DO NOTHING`
+       SELECT c.id, s.id, $1, t.title, t.description, t.total_questions, 'manual', t.status, t.start_time, t.end_time
+       FROM (
+         VALUES
+           ('10', 'A', 'MATH', 'Algebra Readiness Test', 'Quick diagnostic for Algebra fundamentals', 3, 'scheduled', NOW() + INTERVAL '1 day', NOW() + INTERVAL '1 day 1 hour'),
+           ('10', 'A', 'MATH', 'Weekly Practice Quiz', 'Short active practice quiz for classwork', 3, 'active', NOW() - INTERVAL '30 minutes', NOW() + INTERVAL '30 minutes'),
+           ('10', 'A', 'SCI', 'Science Concepts Review', 'Completed formative check for revision', 2, 'completed', NOW() - INTERVAL '4 days', NOW() - INTERVAL '3 days')
+       ) AS t(grade, section, subject_code, title, description, total_questions, status, start_time, end_time)
+       JOIN classes c ON c.grade = t.grade AND c.section = t.section AND c.academic_year = '2024-2025'
+       JOIN subjects s ON s.code = t.subject_code
+       WHERE NOT EXISTS (
+         SELECT 1 FROM tests existing
+         WHERE existing.class_id = c.id
+           AND existing.subject_id = s.id
+           AND existing.title = t.title
+       )`,
+      [teacherId]
     );
 
     await pool.query(
@@ -165,7 +223,12 @@ export const seedDatabase = async () => {
          VALUES
            ('Algebra Readiness Test', 1, 'Solve: 2x + 5 = 15', 'short_answer', '5', 2, 'easy'),
            ('Algebra Readiness Test', 2, 'Which expression is a polynomial?', 'mcq', '2', 1, 'easy'),
-           ('Algebra Readiness Test', 3, 'The graph of y = x^2 opens upward. True or False?', 'true_false', 'true', 1, 'easy')
+           ('Algebra Readiness Test', 3, 'The graph of y = x^2 opens upward. True or False?', 'true_false', 'true', 1, 'easy'),
+           ('Weekly Practice Quiz', 1, 'What is 12 x 8?', 'mcq', '4', 1, 'easy'),
+           ('Weekly Practice Quiz', 2, 'Simplify: 3x + 2x', 'short_answer', '5x', 1, 'easy'),
+           ('Weekly Practice Quiz', 3, 'A linear equation has degree 1. True or False?', 'true_false', 'true', 1, 'easy'),
+           ('Science Concepts Review', 1, 'Water boils at 100°C at standard pressure. True or False?', 'true_false', 'true', 1, 'easy'),
+           ('Science Concepts Review', 2, 'Name the process by which plants make food.', 'short_answer', 'Photosynthesis', 2, 'easy')
        ) AS q(test_title, question_number, question_text, question_type, correct_answer, points, difficulty)
          ON t.title = q.test_title
        ON CONFLICT (test_id, question_number) DO NOTHING`
@@ -181,10 +244,32 @@ export const seedDatabase = async () => {
            ('Algebra Readiness Test', 2, 1, '1/x', false),
            ('Algebra Readiness Test', 2, 2, 'x^2 + 2x + 1', true),
            ('Algebra Readiness Test', 2, 3, 'sqrt(x)', false),
-           ('Algebra Readiness Test', 2, 4, 'sin(x)', false)
+           ('Algebra Readiness Test', 2, 4, 'sin(x)', false),
+           ('Weekly Practice Quiz', 1, 1, '84', false),
+           ('Weekly Practice Quiz', 1, 2, '88', false),
+           ('Weekly Practice Quiz', 1, 3, '92', false),
+           ('Weekly Practice Quiz', 1, 4, '96', true)
        ) AS o(test_title, question_number, option_number, option_text, is_correct)
          ON t.title = o.test_title AND q.question_number = o.question_number
        ON CONFLICT (question_id, option_number) DO NOTHING`
+    );
+
+    // Seed one completed submission for Bob for showcase
+    await pool.query(
+      `INSERT INTO test_submissions (test_id, student_id, class_id, started_at, submitted_at, score, total_score, percentage, status)
+       SELECT t.id, u.id, c.id, NOW() - INTERVAL '4 days 1 hour', NOW() - INTERVAL '4 days', 3, 3, 100, 'graded'
+       FROM tests t
+       JOIN classes c ON c.id = t.class_id
+       JOIN users u ON u.email = 'student2@demo.com'
+       WHERE t.title = 'Science Concepts Review'
+       ON CONFLICT (test_id, student_id)
+       DO UPDATE SET
+         score = EXCLUDED.score,
+         total_score = EXCLUDED.total_score,
+         percentage = EXCLUDED.percentage,
+         status = 'graded',
+         submitted_at = EXCLUDED.submitted_at,
+         updated_at = CURRENT_TIMESTAMP`
     );
 
     console.log('Database seeded successfully!');

@@ -63,7 +63,10 @@ export const getSyllabusForClass = async (req: Request, res: Response) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Syllabus not found' });
+      return res.json({
+        syllabus: null,
+        topics: []
+      });
     }
 
     res.json({ syllabus: result.rows[0] });

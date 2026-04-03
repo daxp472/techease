@@ -6,7 +6,7 @@ import { Class, Subject, Timetable as TimetableType } from '../types';
 import LoadingState from '../components/ui/LoadingState';
 import EmptyState from '../components/ui/EmptyState';
 import PageHeader from '../components/ui/PageHeader';
-import { Plus } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { useToast } from '../components/ui/ToastContext';
 
 const Timetable: React.FC = () => {
@@ -17,6 +17,7 @@ const Timetable: React.FC = () => {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({
     classId: '',
@@ -102,7 +103,7 @@ const Timetable: React.FC = () => {
     }
   };
 
-  const handleCreateEntry = async (e: React.FormEvent) => {
+  const handleCreateOrUpdateEntry = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!formData.classId || !formData.subjectId) {
@@ -112,7 +113,7 @@ const Timetable: React.FC = () => {
 
     setIsSaving(true);
     try {
-      await timetableAPI.create({
+      const payload = {
         classId: Number(formData.classId),
         subjectId: Number(formData.subjectId),
         teacherId: user?.id,
@@ -120,10 +121,17 @@ const Timetable: React.FC = () => {
         startTime: formData.startTime,
         endTime: formData.endTime,
         roomNumber: formData.roomNumber || null
-      });
+      };
 
-      showToast('Timetable entry added successfully', 'success');
+      if (editingId) {
+        await timetableAPI.update(editingId, payload);
+      } else {
+        await timetableAPI.create(payload);
+      }
+
+      showToast(editingId ? 'Timetable entry updated successfully' : 'Timetable entry added successfully', 'success');
       setShowCreate(false);
+      setEditingId(null);
       setFormData({
         classId: '',
         subjectId: '',
@@ -134,10 +142,23 @@ const Timetable: React.FC = () => {
       });
       await fetchTimetable();
     } catch (error: any) {
-      showToast(error?.response?.data?.message || 'Unable to add timetable entry', 'error');
+      showToast(error?.response?.data?.message || 'Unable to save timetable entry', 'error');
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const startEdit = (item: TimetableType) => {
+    setEditingId(item.id);
+    setFormData({
+      classId: String(item.classId),
+      subjectId: String(item.subjectId),
+      dayOfWeek: String(item.dayOfWeek),
+      startTime: item.startTime,
+      endTime: item.endTime,
+      roomNumber: item.roomNumber || ''
+    });
+    setShowCreate(true);
   };
 
   const getDayName = (day: number) => {
@@ -178,8 +199,16 @@ const Timetable: React.FC = () => {
           description="Weekly teaching schedule at a glance"
           actions={
             (user?.role === 'teacher' || user?.role === 'admin') ? (
-              <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
-                <Plus size={16} className="mr-2" />
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  setEditingId(null);
+                  setFormData({ classId: '', subjectId: '', dayOfWeek: '1', startTime: '09:00', endTime: '10:00', roomNumber: '' });
+                  setShowCreate(true);
+                }}
+              >
+                <Pencil size={16} className="mr-2" />
                 Add Manual Slot
               </button>
             ) : null
@@ -219,6 +248,15 @@ const Timetable: React.FC = () => {
                             {item.roomNumber && (
                               <p className="text-sm text-gray-600">Room {item.roomNumber}</p>
                             )}
+                            {(user?.role === 'teacher' || user?.role === 'admin') && (
+                              <button
+                                type="button"
+                                className="mt-2 text-xs font-semibold text-teal-700"
+                                onClick={() => startEdit(item)}
+                              >
+                                Edit
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -234,8 +272,8 @@ const Timetable: React.FC = () => {
         {showCreate && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl">
-              <h2 className="text-xl font-semibold text-slate-900">Add Timetable Entry</h2>
-              <form className="mt-4 space-y-4" onSubmit={handleCreateEntry}>
+              <h2 className="text-xl font-semibold text-slate-900">{editingId ? 'Edit Timetable Entry' : 'Add Timetable Entry'}</h2>
+              <form className="mt-4 space-y-4" onSubmit={handleCreateOrUpdateEntry}>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">Class</label>
@@ -322,7 +360,7 @@ const Timetable: React.FC = () => {
                     Cancel
                   </button>
                   <button type="submit" className="btn-primary" disabled={isSaving}>
-                    {isSaving ? 'Saving...' : 'Save Slot'}
+                    {isSaving ? 'Saving...' : editingId ? 'Update Slot' : 'Save Slot'}
                   </button>
                 </div>
               </form>
