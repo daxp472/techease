@@ -2,10 +2,22 @@ import { Response } from 'express';
 import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
 
+const isAttendanceLocked = async (classId: number, date: string) => {
+  const lockResult = await query(
+    'SELECT id FROM attendance_locks WHERE class_id = $1 AND date = $2',
+    [classId, date]
+  );
+  return lockResult.rows.length > 0;
+};
+
 export const markAttendance = async (req: AuthRequest, res: Response) => {
   try {
     const { studentId, classId, subjectId, date, status, remarks } = req.body;
     const markedBy = req.user?.id;
+
+    if (await isAttendanceLocked(classId, date)) {
+      return res.status(409).json({ message: 'Attendance is locked for this class and date' });
+    }
 
     const result = await query(
       `INSERT INTO attendance (student_id, class_id, subject_id, date, status, remarks, marked_by)
@@ -31,15 +43,38 @@ export const markBulkAttendance = async (req: AuthRequest, res: Response) => {
     const { attendanceRecords } = req.body;
     const markedBy = req.user?.id;
 
-    const values = attendanceRecords.map((record: any) =>
-      `(${record.studentId}, ${record.classId}, ${record.subjectId}, '${record.date}', '${record.status}', ${record.remarks ? `'${record.remarks}'` : 'NULL'}, ${markedBy})`
-    ).join(',');
+    if (!Array.isArray(attendanceRecords) || attendanceRecords.length === 0) {
+      return res.status(400).json({ message: 'No attendance records provided' });
+    }
+
+    const sample = attendanceRecords[0];
+    if (await isAttendanceLocked(sample.classId, sample.date)) {
+      return res.status(409).json({ message: 'Attendance is locked for this class and date' });
+    }
+
+    const valuesClause = attendanceRecords
+      .map((_: any, index: number) => {
+        const offset = index * 7;
+        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`;
+      })
+      .join(',');
+
+    const params = attendanceRecords.flatMap((record: any) => [
+      record.studentId,
+      record.classId,
+      record.subjectId,
+      record.date,
+      record.status,
+      record.remarks || null,
+      markedBy || null
+    ]);
 
     await query(
       `INSERT INTO attendance (student_id, class_id, subject_id, date, status, remarks, marked_by)
-       VALUES ${values}
+       VALUES ${valuesClause}
        ON CONFLICT (student_id, class_id, subject_id, date)
-       DO UPDATE SET status = EXCLUDED.status, remarks = EXCLUDED.remarks, marked_by = EXCLUDED.marked_by, updated_at = CURRENT_TIMESTAMP`
+       DO UPDATE SET status = EXCLUDED.status, remarks = EXCLUDED.remarks, marked_by = EXCLUDED.marked_by, updated_at = CURRENT_TIMESTAMP`,
+      params
     );
 
     res.status(201).json({
@@ -83,12 +118,57 @@ export const getAttendanceByClass = async (req: AuthRequest, res: Response) => {
 
     const result = await query(queryText, params);
 
+    let locked = false;
+    if (classId && date) {
+      locked = await isAttendanceLocked(Number(classId), String(date));
+    }
+
     res.json({
-      attendance: result.rows
+      attendance: result.rows,
+      locked
     });
   } catch (error) {
     console.error('Get attendance error:', error);
     res.status(500).json({ message: 'Error fetching attendance' });
+  }
+};
+
+export const lockAttendanceByClassAndDate = async (req: AuthRequest, res: Response) => {
+  try {
+    const { classId, date } = req.body;
+    const lockedBy = req.user?.id;
+
+    if (!classId || !date) {
+      return res.status(400).json({ message: 'classId and date are required' });
+    }
+
+    await query(
+      `INSERT INTO attendance_locks (class_id, date, locked_by)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (class_id, date) DO NOTHING`,
+      [classId, date, lockedBy || null]
+    );
+
+    return res.json({ message: 'Attendance locked successfully' });
+  } catch (error) {
+    console.error('Lock attendance error:', error);
+    return res.status(500).json({ message: 'Error locking attendance' });
+  }
+};
+
+export const getAttendanceLockStatus = async (req: AuthRequest, res: Response) => {
+  try {
+    const { classId, date } = req.query;
+
+    if (!classId || !date) {
+      return res.status(400).json({ message: 'classId and date are required' });
+    }
+
+    const locked = await isAttendanceLocked(Number(classId), String(date));
+    return res.json({ locked });
+  } catch (error) {
+    console.error('Get attendance lock status error:', error);
+    return res.status(500).json({ message: 'Error checking attendance lock status' });
   }
 };
 
