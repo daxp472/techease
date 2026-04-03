@@ -37,11 +37,120 @@ type DashboardAttentionStudent = {
   reasons: string[];
 };
 
+type StudentLearningTopic = {
+  subjectName: string;
+  averagePercentage: number;
+  totalAssessments: number;
+};
+
+type TopicVideoRecommendation = {
+  title: string;
+  videoId: string;
+  recommendedFor: string;
+};
+
+type ProblemTypeKey = 'concept' | 'practice' | 'revision';
+
+const STUDENT_LEARNING_THRESHOLD = 60;
+
+const SUBJECT_VIDEO_LIBRARY: Array<{
+  pattern: RegExp;
+  recommendations: Record<ProblemTypeKey, TopicVideoRecommendation[]>;
+}> = [
+  {
+    pattern: /(math|mathematics|algebra|geometry|trigonometry)/i,
+    recommendations: {
+      concept: [
+        { title: 'Algebra Basics and Equation Solving', videoId: 'M7lc1UVf-VE', recommendedFor: 'Concept foundation in algebra' },
+        { title: 'Understanding Variables and Equations', videoId: 'ysz5S6PUM-U', recommendedFor: 'Core equation concepts' }
+      ],
+      practice: [
+        { title: 'Solving Equation Practice Walkthrough', videoId: 'M7lc1UVf-VE', recommendedFor: 'Practice accuracy improvement' },
+        { title: 'Common Math Mistakes and Fixes', videoId: 'ysz5S6PUM-U', recommendedFor: 'Reducing step-by-step errors' }
+      ],
+      revision: [
+        { title: 'Math Revision Sprint: Key Rules', videoId: 'M7lc1UVf-VE', recommendedFor: 'Fast concept revision before tests' },
+        { title: 'Quick Formula Revision Session', videoId: 'ysz5S6PUM-U', recommendedFor: 'Formula recall and retention' }
+      ]
+    }
+  },
+  {
+    pattern: /(science|physics|chemistry|biology)/i,
+    recommendations: {
+      concept: [
+        { title: 'Science Concepts Explained Simply', videoId: 'M7lc1UVf-VE', recommendedFor: 'Concept foundation in science' },
+        { title: 'Core Physics and Chemistry Principles', videoId: 'ysz5S6PUM-U', recommendedFor: 'Understanding basic principles' }
+      ],
+      practice: [
+        { title: 'Science Problem Solving Practice', videoId: 'M7lc1UVf-VE', recommendedFor: 'Practice accuracy in applied questions' },
+        { title: 'How to Approach Numerical Questions', videoId: 'ysz5S6PUM-U', recommendedFor: 'Structured solving approach' }
+      ],
+      revision: [
+        { title: 'Science Revision: Important Topics', videoId: 'M7lc1UVf-VE', recommendedFor: 'High-yield topic revision' },
+        { title: 'Exam Revision for Physics and Chemistry', videoId: 'ysz5S6PUM-U', recommendedFor: 'Pre-exam recap' }
+      ]
+    }
+  },
+  {
+    pattern: /(english|language|grammar|literature)/i,
+    recommendations: {
+      concept: [
+        { title: 'English Grammar Basics', videoId: 'M7lc1UVf-VE', recommendedFor: 'Grammar concept clarity' },
+        { title: 'Sentence Structure Fundamentals', videoId: 'ysz5S6PUM-U', recommendedFor: 'Core language structure understanding' }
+      ],
+      practice: [
+        { title: 'Reading Comprehension Practice', videoId: 'M7lc1UVf-VE', recommendedFor: 'Answer accuracy in comprehension' },
+        { title: 'Grammar Error Correction Practice', videoId: 'ysz5S6PUM-U', recommendedFor: 'Frequent grammar mistakes' }
+      ],
+      revision: [
+        { title: 'English Revision: Key Grammar Rules', videoId: 'M7lc1UVf-VE', recommendedFor: 'Quick grammar revision' },
+        { title: 'Vocabulary and Comprehension Revision', videoId: 'ysz5S6PUM-U', recommendedFor: 'Revision before assessments' }
+      ]
+    }
+  },
+  {
+    pattern: /(history|civics|geography|social)/i,
+    recommendations: {
+      concept: [
+        { title: 'History and Civics Core Concepts', videoId: 'M7lc1UVf-VE', recommendedFor: 'Concept foundation in social studies' },
+        { title: 'Geography Basics and Map Understanding', videoId: 'ysz5S6PUM-U', recommendedFor: 'Core geography understanding' }
+      ],
+      practice: [
+        { title: 'Social Studies Answer Writing Practice', videoId: 'M7lc1UVf-VE', recommendedFor: 'Answer structure and accuracy' },
+        { title: 'Map-Based Question Practice', videoId: 'ysz5S6PUM-U', recommendedFor: 'Applied geography practice' }
+      ],
+      revision: [
+        { title: 'History Revision in 20 Minutes', videoId: 'M7lc1UVf-VE', recommendedFor: 'Timeline and event revision' },
+        { title: 'Quick Civics and Geography Revision', videoId: 'ysz5S6PUM-U', recommendedFor: 'Last-mile exam preparation' }
+      ]
+    }
+  }
+];
+
+const getProblemType = (averagePercentage: number): { key: ProblemTypeKey; label: string } => {
+  if (averagePercentage < 40) return { key: 'concept', label: 'Concept foundation gap' };
+  if (averagePercentage < 50) return { key: 'practice', label: 'Practice accuracy gap' };
+  return { key: 'revision', label: 'Revision needed' };
+};
+
+const getVideoRecommendationsForTopic = (subjectName: string, problemKey: ProblemTypeKey): TopicVideoRecommendation[] => {
+  const matched = SUBJECT_VIDEO_LIBRARY.find((entry) => entry.pattern.test(subjectName));
+  if (matched) return matched.recommendations[problemKey];
+  return [
+    { title: 'Study Skills and Learning Strategy', videoId: 'M7lc1UVf-VE', recommendedFor: 'General study planning support' },
+    { title: 'How to Learn Difficult Topics Faster', videoId: 'ysz5S6PUM-U', recommendedFor: 'General learning speed and retention' }
+  ];
+};
+
+const getThumbnailUrl = (videoId: string) => `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
 const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({});
   const [todaysTimetable, setTodaysTimetable] = useState<Timetable[]>([]);
   const [attentionStudents, setAttentionStudents] = useState<DashboardAttentionStudent[]>([]);
+  const [studentLearningTopics, setStudentLearningTopics] = useState<StudentLearningTopic[]>([]);
+  const [activeVideo, setActiveVideo] = useState<{ title: string; videoId: string; subject: string; problemType: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -111,6 +220,25 @@ const Dashboard: React.FC = () => {
           .slice(0, 6);
 
         setAttentionStudents(mergedStudents);
+      }
+
+      if (user?.role === 'student' && user?.id) {
+        const studentAnalyticsRes = await analyticsAPI.getStudentAnalytics(user.id);
+        const subjectRows = Array.isArray(studentAnalyticsRes.data?.subjectWisePerformance)
+          ? studentAnalyticsRes.data.subjectWisePerformance
+          : [];
+
+        const weakRows = subjectRows
+          .map((row: any) => ({
+            subjectName: row.subjectName ?? row.subject_name ?? '-',
+            averagePercentage: Number(row.averagePercentage ?? row.average_percentage ?? 0),
+            totalAssessments: Number(row.totalAssessments ?? row.total_assessments ?? 0)
+          }))
+          .filter((row: StudentLearningTopic) => row.averagePercentage < STUDENT_LEARNING_THRESHOLD)
+          .sort((a: StudentLearningTopic, b: StudentLearningTopic) => a.averagePercentage - b.averagePercentage)
+          .slice(0, 4);
+
+        setStudentLearningTopics(weakRows);
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -341,49 +469,177 @@ const Dashboard: React.FC = () => {
         )}
 
         {user?.role === 'student' && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="card p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-slate-600">Enrolled Classes</p>
-                  <p className="mt-2 text-3xl font-bold text-slate-900">
-                    {stats.enrolledClasses || 0}
-                  </p>
+          <>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="card p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-600">Enrolled Classes</p>
+                    <p className="mt-2 text-3xl font-bold text-slate-900">
+                      {stats.enrolledClasses || 0}
+                    </p>
+                  </div>
+                  <div className="rounded-full bg-sky-100 p-3">
+                    <BookOpen className="h-6 w-6 text-blue-600" />
+                  </div>
                 </div>
-                <div className="rounded-full bg-sky-100 p-3">
-                  <BookOpen className="h-6 w-6 text-blue-600" />
+              </div>
+
+              <div className="card p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-600">Attendance</p>
+                    <p className="mt-2 text-3xl font-bold text-slate-900">
+                      {Math.round(stats.attendancePercentage || 0)}%
+                    </p>
+                  </div>
+                  <div className="rounded-full bg-emerald-100 p-3">
+                    <ClipboardCheck className="h-6 w-6 text-green-600" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="card p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-600">Average Grade</p>
+                    <p className="mt-2 text-3xl font-bold text-slate-900">
+                      {Math.round(stats.averageGrade || 0)}%
+                    </p>
+                  </div>
+                  <div className="rounded-full bg-indigo-100 p-3">
+                    <Calendar className="h-6 w-6 text-indigo-600" />
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="card p-6">
-              <div className="flex items-center justify-between">
+            <div className="mt-6 card p-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-slate-600">Attendance</p>
-                  <p className="mt-2 text-3xl font-bold text-slate-900">
-                    {Math.round(stats.attendancePercentage || 0)}%
-                  </p>
+                  <h2 className="text-lg font-semibold text-slate-900">Personal Learning Plan</h2>
+                  <p className="text-sm text-slate-600">Focused in-portal study actions for your weaker subjects.</p>
                 </div>
-                <div className="rounded-full bg-emerald-100 p-3">
-                  <ClipboardCheck className="h-6 w-6 text-green-600" />
-                </div>
+                <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
+                  Below {STUDENT_LEARNING_THRESHOLD}%
+                </span>
               </div>
+
+              {studentLearningTopics.length === 0 ? (
+                <div className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">
+                  Great progress. No weak subjects detected right now.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {studentLearningTopics.map((topic) => (
+                    <div key={topic.subjectName} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="font-semibold text-slate-900">{topic.subjectName}</p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Current average: {Math.round(topic.averagePercentage)}% • Assessments: {topic.totalAssessments}
+                      </p>
+                      <div className="mt-3 flex items-center gap-3 text-xs font-semibold">
+                        <Link to="/syllabus" className="inline-flex items-center rounded-lg bg-teal-600 px-3 py-1.5 text-white transition hover:bg-teal-700">
+                          Study Syllabus
+                        </Link>
+                        <Link to="/tests" className="inline-flex items-center rounded-lg bg-slate-700 px-3 py-1.5 text-white transition hover:bg-slate-800">
+                          Practice Test
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div className="card p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-slate-600">Average Grade</p>
-                  <p className="mt-2 text-3xl font-bold text-slate-900">
-                    {Math.round(stats.averageGrade || 0)}%
-                  </p>
+            <div className="mt-6 card p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold text-slate-900">Recommended Video Lessons (In Portal)</h2>
+                <p className="text-sm text-slate-600">
+                  Videos are selected by weak subject and problem type, and play directly inside the portal.
+                </p>
+              </div>
+
+              {studentLearningTopics.length === 0 ? (
+                <div className="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">
+                  No weak subjects detected right now, so no mandatory video recommendations.
                 </div>
-                <div className="rounded-full bg-indigo-100 p-3">
-                  <Calendar className="h-6 w-6 text-indigo-600" />
+              ) : (
+                <div className="space-y-6">
+                  {studentLearningTopics.map((topic) => {
+                    const problem = getProblemType(topic.averagePercentage);
+                    const recommendations = getVideoRecommendationsForTopic(topic.subjectName, problem.key);
+
+                    return (
+                      <div key={`video-${topic.subjectName}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <p className="font-semibold text-slate-900">{topic.subjectName}</p>
+                            <p className="text-sm text-slate-600">
+                              Problem: {problem.label} • Current average: {Math.round(topic.averagePercentage)}%
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                            Needs improvement
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                          {recommendations.map((video) => (
+                            <div key={`${topic.subjectName}-${video.videoId}-${video.title}`} className="rounded-xl border border-slate-200 bg-white p-3">
+                              <p className="mb-2 text-sm font-semibold text-slate-800">{video.title}</p>
+                              <p className="mb-2 text-xs text-slate-500">Recommended for: {video.recommendedFor}</p>
+                              <button
+                                type="button"
+                                onClick={() => setActiveVideo({ title: video.title, videoId: video.videoId, subject: topic.subjectName, problemType: problem.label })}
+                                className="group relative w-full overflow-hidden rounded-lg border border-slate-200"
+                              >
+                                <img
+                                  src={getThumbnailUrl(video.videoId)}
+                                  alt={`${video.title} thumbnail`}
+                                  className="h-56 w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                                  loading="lazy"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-slate-900/35 opacity-100 transition group-hover:bg-slate-900/45">
+                                  <span className="rounded-full bg-white/90 px-4 py-2 text-sm font-semibold text-slate-900">
+                                    Play Video
+                                  </span>
+                                </div>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {activeVideo && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4">
+                <div className="w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">{activeVideo.title}</h3>
+                      <p className="text-sm text-slate-600">{activeVideo.subject} • {activeVideo.problemType}</p>
+                    </div>
+                    <button type="button" className="btn-secondary" onClick={() => setActiveVideo(null)}>
+                      Close
+                    </button>
+                  </div>
+                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                    <iframe
+                      className="h-[420px] w-full"
+                      src={`https://www.youtube-nocookie.com/embed/${activeVideo.videoId}?autoplay=1&rel=0`}
+                      title={`Video player: ${activeVideo.title}`}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
 
         {user?.role === 'admin' && (

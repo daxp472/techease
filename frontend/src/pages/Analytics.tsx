@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { analyticsAPI, classAPI } from '../services/api';
 import { ClassAnalytics, Class } from '../types';
@@ -152,6 +151,7 @@ const Analytics: React.FC = () => {
   const [classThreshold, setClassThreshold] = useState(65);
   const [attendanceThreshold, setAttendanceThreshold] = useState(75);
   const [loading, setLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchClasses();
@@ -181,10 +181,13 @@ const Analytics: React.FC = () => {
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
+      setAnalyticsError(null);
       const response = await analyticsAPI.getClassAnalytics(parseInt(selectedClass));
       setAnalytics(normalizeAnalytics(response.data));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching analytics:', error);
+      setAnalytics(null);
+      setAnalyticsError(error?.response?.data?.message || 'Unable to load analytics for this class. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -208,9 +211,7 @@ const Analytics: React.FC = () => {
 
   const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
-  const classAverageValue = signals
-    ? Math.round(signals.classSummary.classAverage)
-    : Math.round(analytics?.attendanceStats?.attendancePercentage || 0);
+  const attendanceRateValue = Math.round(analytics?.attendanceStats?.attendancePercentage || 0);
   const supportCountValue = signals
     ? signals.classSummary.criticalCount + signals.classSummary.watchlistCount
     : analytics?.weakStudents?.length || 0;
@@ -221,12 +222,12 @@ const Analytics: React.FC = () => {
   const insightCards = analytics
     ? [
         {
-          title: 'Class Average',
-          value: `${classAverageValue}%`,
-          hint: signals?.classSummary.classNeedsIntervention
-            ? 'Class understanding needs revision.'
-            : 'Class understanding is within range.',
-          tone: signals?.classSummary.classNeedsIntervention ? 'text-rose-700 bg-rose-50' : 'text-emerald-700 bg-emerald-50'
+          title: 'Attendance Alert',
+          value: `${attendanceRateValue}%`,
+          hint: attendanceRateValue < attendanceThreshold
+            ? 'Attendance dropped this week.'
+            : 'Attendance is in a healthy range.',
+          tone: attendanceRateValue < attendanceThreshold ? 'text-rose-700 bg-rose-50' : 'text-emerald-700 bg-emerald-50'
         },
         {
           title: 'Students Need Support',
@@ -235,7 +236,7 @@ const Analytics: React.FC = () => {
           tone: supportCountValue > 0 ? 'text-amber-700 bg-amber-50' : 'text-emerald-700 bg-emerald-50'
         },
         {
-          title: 'Topics To Revise',
+          title: 'Topics Need Revision',
           value: `${revisionTopicCountValue}`,
           hint: revisionTopicCountValue > 0 ? 'These topics need another teaching pass.' : 'Topic understanding is healthy.',
           tone: revisionTopicCountValue > 0 ? 'text-indigo-700 bg-indigo-50' : 'text-emerald-700 bg-emerald-50'
@@ -281,6 +282,22 @@ const Analytics: React.FC = () => {
 
         {loading && (
           <LoadingState message="Loading analytics..." />
+        )}
+
+        {!!selectedClass && !loading && !analytics && (
+          <div className="card p-6">
+            <h3 className="text-lg font-semibold text-slate-900">Analytics could not be loaded</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              {analyticsError || 'No analytics data is available for the selected class right now.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => fetchAnalytics()}
+              className="mt-4 inline-flex items-center rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-700"
+            >
+              Retry
+            </button>
+          </div>
         )}
 
         {analytics && !loading && (
@@ -491,87 +508,6 @@ const Analytics: React.FC = () => {
               )}
             </div>
 
-            <div className="card p-6">
-              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Test Results Overview</h3>
-                  <p className="text-sm text-slate-600">Summary of test submissions and average scores for the selected class.</p>
-                </div>
-                <div className="text-sm text-slate-500">Connected to test submissions and test analytics data</div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Total tests</p>
-                  <p className="mt-1 text-2xl font-bold text-slate-900">{analytics.testStats?.totalTests ?? 0}</p>
-                </div>
-                <div className="rounded-xl bg-blue-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-blue-700">Scheduled</p>
-                  <p className="mt-1 text-2xl font-bold text-blue-800">{analytics.testStats?.scheduledTests ?? 0}</p>
-                </div>
-                <div className="rounded-xl bg-emerald-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-emerald-700">Active</p>
-                  <p className="mt-1 text-2xl font-bold text-emerald-800">{analytics.testStats?.activeTests ?? 0}</p>
-                </div>
-                <div className="rounded-xl bg-indigo-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-indigo-700">Completed</p>
-                  <p className="mt-1 text-2xl font-bold text-indigo-800">{analytics.testStats?.completedTests ?? 0}</p>
-                </div>
-                <div className="rounded-xl bg-amber-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-amber-700">Students with results</p>
-                  <p className="mt-1 text-2xl font-bold text-amber-800">{analytics.testStats?.studentsWithResults ?? 0}</p>
-                </div>
-                <div className="rounded-xl bg-teal-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-teal-700">Graded submissions</p>
-                  <p className="mt-1 text-2xl font-bold text-teal-800">{analytics.testStats?.gradedSubmissions ?? 0}</p>
-                </div>
-              </div>
-
-              <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200 text-sm">
-                    <thead className="bg-slate-50 text-slate-600">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-medium">Test</th>
-                        <th className="px-4 py-3 text-left font-medium">Status</th>
-                        <th className="px-4 py-3 text-left font-medium">Submissions</th>
-                        <th className="px-4 py-3 text-left font-medium">Graded</th>
-                        <th className="px-4 py-3 text-left font-medium">Average</th>
-                        <th className="px-4 py-3 text-left font-medium">Range</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 bg-white">
-                      {(analytics.testPerformance || []).length > 0 ? (
-                        analytics.testPerformance!.map((test) => (
-                          <tr key={test.id}>
-                            <td className="px-4 py-3 font-medium text-slate-900">
-                              <Link
-                                to={`/tests?openTestId=${test.id}&classId=${selectedClass}`}
-                                className="text-teal-700 hover:text-teal-800 hover:underline"
-                              >
-                                {test.title}
-                              </Link>
-                            </td>
-                            <td className="px-4 py-3 capitalize text-slate-600">{test.status}</td>
-                            <td className="px-4 py-3 text-slate-700">{test.totalSubmissions}</td>
-                            <td className="px-4 py-3 text-slate-700">{test.gradedSubmissions}</td>
-                            <td className="px-4 py-3 text-slate-900">{Math.round(test.averagePercentage)}%</td>
-                            <td className="px-4 py-3 text-slate-600">{Math.round(test.minPercentage)}% - {Math.round(test.maxPercentage)}%</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td className="px-4 py-6 text-slate-500" colSpan={6}>
-                            No test submissions are available for this class yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
             <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
               <div className="card p-6">
                 <h3 className="mb-2 text-sm font-medium text-slate-600">
@@ -602,7 +538,7 @@ const Analytics: React.FC = () => {
             </div>
 
             {insightCards.length > 0 && (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 {insightCards.map((card) => (
                   <div key={card.title} className={`rounded-2xl p-4 ${card.tone}`}>
                     <p className="text-xs uppercase tracking-wide">{card.title}</p>

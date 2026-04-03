@@ -7,14 +7,25 @@ export const getClassAnalytics = async (req: AuthRequest, res: Response) => {
     const { classId } = req.params;
 
     const attendanceStats = await query(
-      `SELECT
-        COUNT(DISTINCT student_id) as total_students,
-        COUNT(*) as total_attendance_records,
-        COUNT(*) FILTER (WHERE status = 'present') as total_present,
-        COUNT(*) FILTER (WHERE status = 'absent') as total_absent,
-        ROUND(COUNT(*) FILTER (WHERE status = 'present') * 100.0 / NULLIF(COUNT(*), 0), 2) as attendance_percentage
-       FROM attendance
-       WHERE class_id = $1`,
+      `WITH enrolled_students AS (
+         SELECT student_id
+         FROM enrollments
+         WHERE class_id = $1 AND status = 'active'
+       )
+       SELECT
+         (SELECT COUNT(*) FROM enrolled_students) as total_students,
+         COUNT(a.id) as total_attendance_records,
+         COUNT(a.id) FILTER (WHERE a.status = 'present') as total_present,
+         COUNT(a.id) FILTER (WHERE a.status = 'absent') as total_absent,
+         ROUND(
+           COUNT(a.id) FILTER (WHERE a.status = 'present') * 100.0
+           / NULLIF(COUNT(a.id), 0),
+           2
+         ) as attendance_percentage
+       FROM enrolled_students e
+       LEFT JOIN attendance a
+         ON a.student_id = e.student_id
+        AND a.class_id = $1`,
       [classId]
     );
 
@@ -34,9 +45,9 @@ export const getClassAnalytics = async (req: AuthRequest, res: Response) => {
         s.name as subject_name,
         s.code as subject_code,
         COUNT(*) as total_assessments,
-        ROUND(AVG(g.marks_obtained / g.max_marks * 100), 2) as average_percentage,
-        MIN(g.marks_obtained / g.max_marks * 100) as min_percentage,
-        MAX(g.marks_obtained / g.max_marks * 100) as max_percentage
+        ROUND(AVG(g.marks_obtained / NULLIF(g.max_marks, 0) * 100), 2) as average_percentage,
+        MIN(g.marks_obtained / NULLIF(g.max_marks, 0) * 100) as min_percentage,
+        MAX(g.marks_obtained / NULLIF(g.max_marks, 0) * 100) as max_percentage
        FROM grades g
        JOIN subjects s ON g.subject_id = s.id
        WHERE g.class_id = $1
@@ -52,7 +63,7 @@ export const getClassAnalytics = async (req: AuthRequest, res: Response) => {
         u.last_name,
         e.roll_number,
         COUNT(*) as total_assessments,
-        ROUND(AVG(g.marks_obtained / g.max_marks * 100), 2) as average_percentage,
+        ROUND(AVG(g.marks_obtained / NULLIF(g.max_marks, 0) * 100), 2) as average_percentage,
         SUM(g.marks_obtained) as total_marks,
         SUM(g.max_marks) as total_possible_marks
        FROM grades g
@@ -104,7 +115,7 @@ export const getClassAnalytics = async (req: AuthRequest, res: Response) => {
     const monthlyTrend = await query(
       `SELECT
         DATE_TRUNC('month', exam_date) as month,
-        ROUND(AVG(marks_obtained / max_marks * 100), 2) as average_percentage
+        ROUND(AVG(marks_obtained / NULLIF(max_marks, 0) * 100), 2) as average_percentage
        FROM grades
        WHERE class_id = $1 AND exam_date IS NOT NULL
        GROUP BY DATE_TRUNC('month', exam_date)
@@ -139,9 +150,9 @@ export const getClassAnalytics = async (req: AuthRequest, res: Response) => {
     const testStats = await query(
       `SELECT
          COUNT(*) as total_tests,
-         COUNT(*) FILTER (WHERE status = 'scheduled') as scheduled_tests,
-         COUNT(*) FILTER (WHERE status = 'active') as active_tests,
-         COUNT(*) FILTER (WHERE status = 'completed') as completed_tests,
+         COUNT(*) FILTER (WHERE t.status = 'scheduled') as scheduled_tests,
+         COUNT(*) FILTER (WHERE t.status = 'active') as active_tests,
+         COUNT(*) FILTER (WHERE t.status = 'completed') as completed_tests,
          COUNT(DISTINCT ts.student_id) as students_with_results,
          COUNT(ts.id) FILTER (WHERE ts.status = 'graded') as graded_submissions
        FROM tests t
@@ -173,7 +184,7 @@ export const getStudentAnalytics = async (req: AuthRequest, res: Response) => {
     const overallPerformance = await query(
       `SELECT
         COUNT(*) as total_assessments,
-        ROUND(AVG(marks_obtained / max_marks * 100), 2) as average_percentage,
+        ROUND(AVG(marks_obtained / NULLIF(max_marks, 0) * 100), 2) as average_percentage,
         SUM(marks_obtained) as total_marks,
         SUM(max_marks) as total_possible_marks,
         COUNT(*) FILTER (WHERE grade IN ('A+', 'A')) as excellent_grades,
@@ -188,9 +199,9 @@ export const getStudentAnalytics = async (req: AuthRequest, res: Response) => {
         s.name as subject_name,
         s.code as subject_code,
         COUNT(*) as total_assessments,
-        ROUND(AVG(g.marks_obtained / g.max_marks * 100), 2) as average_percentage,
-        MIN(g.marks_obtained / g.max_marks * 100) as min_percentage,
-        MAX(g.marks_obtained / g.max_marks * 100) as max_percentage
+        ROUND(AVG(g.marks_obtained / NULLIF(g.max_marks, 0) * 100), 2) as average_percentage,
+        MIN(g.marks_obtained / NULLIF(g.max_marks, 0) * 100) as min_percentage,
+        MAX(g.marks_obtained / NULLIF(g.max_marks, 0) * 100) as max_percentage
        FROM grades g
        JOIN subjects s ON g.subject_id = s.id
        WHERE g.student_id = $1
@@ -213,7 +224,7 @@ export const getStudentAnalytics = async (req: AuthRequest, res: Response) => {
 
     const recentGrades = await query(
       `SELECT g.*, s.name as subject_name, et.name as exam_type_name,
-              ROUND((g.marks_obtained / g.max_marks * 100), 2) as percentage
+              ROUND((g.marks_obtained / NULLIF(g.max_marks, 0) * 100), 2) as percentage
        FROM grades g
        LEFT JOIN subjects s ON g.subject_id = s.id
        LEFT JOIN exam_types et ON g.exam_type_id = et.id
@@ -226,7 +237,7 @@ export const getStudentAnalytics = async (req: AuthRequest, res: Response) => {
     const progressTrend = await query(
       `SELECT
         DATE_TRUNC('month', exam_date) as month,
-        ROUND(AVG(marks_obtained / max_marks * 100), 2) as average_percentage
+        ROUND(AVG(marks_obtained / NULLIF(max_marks, 0) * 100), 2) as average_percentage
        FROM grades
        WHERE student_id = $1 AND exam_date IS NOT NULL
        GROUP BY DATE_TRUNC('month', exam_date)
