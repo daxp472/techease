@@ -2,12 +2,15 @@ import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 import { analyticsAPI, classAPI } from '../services/api';
 import { ClassAnalytics, Class } from '../types';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
+import PageHeader from '../components/ui/PageHeader';
+import LoadingState from '../components/ui/LoadingState';
+import EmptyState from '../components/ui/EmptyState';
 
 const Analytics: React.FC = () => {
   const [classes, setClasses] = useState<Class[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>('');
-  const [analytics, setAnalytics] = useState<ClassAnalytics | null>(null);
+  const [analytics, setAnalytics] = useState<(ClassAnalytics & { monthlyTrend?: Array<{ month: string; average_percentage: number }> }) | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -43,19 +46,45 @@ const Analytics: React.FC = () => {
 
   const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
+  const insightCards = analytics
+    ? [
+        {
+          title: 'Attendance Alert',
+          value: `${Math.round(analytics.attendanceStats?.attendancePercentage || 0)}%`,
+          hint: (analytics.attendanceStats?.attendancePercentage || 0) < 80 ? 'Attendance dropped this week.' : 'Attendance holding steady.',
+          tone: (analytics.attendanceStats?.attendancePercentage || 0) < 80 ? 'text-rose-700 bg-rose-50' : 'text-emerald-700 bg-emerald-50'
+        },
+        {
+          title: 'Students Need Support',
+          value: `${(analytics.weakStudents?.length || 0)}`,
+          hint: (analytics.weakStudents?.length || 0) > 0 ? 'Target coaching recommended.' : 'No urgent performance risks.',
+          tone: (analytics.weakStudents?.length || 0) > 0 ? 'text-amber-700 bg-amber-50' : 'text-emerald-700 bg-emerald-50'
+        }
+      ]
+    : [];
+
+  const trendData = (analytics?.monthlyTrend || [])
+    .slice()
+    .reverse()
+    .map((item) => ({
+      month: item.month ? new Date(item.month).toLocaleString('default', { month: 'short' }) : 'N/A',
+      average: Number(item.average_percentage) || 0
+    }));
+
   return (
     <Layout>
       <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">Analytics & Insights</h1>
+        <PageHeader
+          title="Analytics & Insights"
+          description="Track performance trends and identify students who need attention early"
+        />
 
-        <div className="bg-white rounded-lg shadow mb-6 p-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Select Class
-          </label>
+        <div className="card mb-6 p-4">
+          <label className="mb-2 block text-sm font-medium text-slate-700">Select Class</label>
           <select
             value={selectedClass}
             onChange={(e) => setSelectedClass(e.target.value)}
-            className="w-full md:w-1/2 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="input-base w-full md:w-1/2"
           >
             <option value="">Choose a class</option>
             {classes.map((cls) => (
@@ -67,50 +96,77 @@ const Analytics: React.FC = () => {
         </div>
 
         {loading && (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-gray-600">Loading analytics...</div>
-          </div>
+          <LoadingState message="Loading analytics..." />
         )}
 
         {analytics && !loading && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-sm font-medium text-gray-600 mb-2">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+              <div className="card p-6">
+                <h3 className="mb-2 text-sm font-medium text-slate-600">
                   Total Students
                 </h3>
-                <p className="text-3xl font-bold text-gray-900">
-                  {analytics.attendanceStats.totalStudents}
+                <p className="text-3xl font-bold text-slate-900">
+                  {analytics.attendanceStats?.totalStudents || 0}
                 </p>
               </div>
 
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-sm font-medium text-gray-600 mb-2">
+              <div className="card p-6">
+                <h3 className="mb-2 text-sm font-medium text-slate-600">
                   Attendance Rate
                 </h3>
                 <p className="text-3xl font-bold text-green-600">
-                  {Math.round(analytics.attendanceStats.attendancePercentage)}%
+                  {Math.round((analytics.attendanceStats?.attendancePercentage || 0))}%
                 </p>
               </div>
 
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-sm font-medium text-gray-600 mb-2">
+              <div className="card p-6">
+                <h3 className="mb-2 text-sm font-medium text-slate-600">
                   Total Assessments
                 </h3>
-                <p className="text-3xl font-bold text-gray-900">
-                  {analytics.attendanceStats.totalAttendanceRecords}
+                <p className="text-3xl font-bold text-slate-900">
+                  {analytics.attendanceStats?.totalAttendanceRecords || 0}
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            {insightCards.length > 0 && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {insightCards.map((card) => (
+                  <div key={card.title} className={`rounded-2xl p-4 ${card.tone}`}>
+                    <p className="text-xs uppercase tracking-wide">{card.title}</p>
+                    <p className="mt-1 text-2xl font-bold">{card.value}</p>
+                    <p className="mt-1 text-sm opacity-90">{card.hint}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="card p-6">
+              <h3 className="mb-4 text-lg font-semibold text-slate-900">Performance Trend (Last 6 Months)</h3>
+              {trendData.length === 0 ? (
+                <p className="text-sm text-slate-500">No monthly trend data yet.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="month" />
+                    <YAxis domain={[0, 100]} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="average" stroke="#0f766e" strokeWidth={3} dot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div className="card p-6">
+                <h3 className="mb-4 text-lg font-semibold text-slate-900">
                   Subject-wise Performance
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={analytics.subjectWisePerformance}>
-                    <CartesianGrid strokeDasharray="3 3" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="subjectName" />
                     <YAxis />
                     <Tooltip />
@@ -120,8 +176,8 @@ const Analytics: React.FC = () => {
                 </ResponsiveContainer>
               </div>
 
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              <div className="card p-6">
+                <h3 className="mb-4 text-lg font-semibold text-slate-900">
                   Grade Distribution
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
@@ -146,9 +202,9 @@ const Analytics: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <div className="card p-6">
+                <h3 className="mb-4 text-lg font-semibold text-slate-900">
                   Top Performers
                 </h3>
                 <div className="space-y-3">
@@ -178,8 +234,8 @@ const Analytics: React.FC = () => {
                 </div>
               </div>
 
-              <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              <div className="card p-6">
+                <h3 className="mb-4 text-lg font-semibold text-slate-900">
                   Students Needing Attention
                 </h3>
                 <div className="space-y-3">
@@ -213,9 +269,7 @@ const Analytics: React.FC = () => {
         )}
 
         {!selectedClass && !loading && (
-          <div className="bg-white rounded-lg shadow p-12 text-center">
-            <p className="text-gray-600">Please select a class to view analytics</p>
-          </div>
+          <EmptyState title="Select a class to view analytics" />
         )}
       </div>
     </Layout>
