@@ -82,7 +82,22 @@ const Grades: React.FC = () => {
     try {
       setLoading(true);
       const response = await gradeAPI.getByClass({ classId: selectedClass });
-      setGrades(response.data.grades);
+      const normalized = (response.data.grades || []).map((grade: any) => {
+        const marksObtained = Number(grade.marksObtained ?? grade.marks_obtained ?? grade.marksobtained ?? 0);
+        const maxMarks = Number(grade.maxMarks ?? grade.max_marks ?? grade.maxmarks ?? 0);
+        return {
+          ...grade,
+          id: Number(grade.id),
+          firstName: grade.firstName ?? grade.first_name ?? grade.firstname ?? '',
+          lastName: grade.lastName ?? grade.last_name ?? grade.lastname ?? '',
+          subjectName: grade.subjectName ?? grade.subject_name ?? grade.subjectname ?? '-',
+          examTypeName: grade.examTypeName ?? grade.exam_type_name ?? grade.examtypename ?? '-',
+          marksObtained,
+          maxMarks,
+          grade: grade.grade ?? '-'
+        };
+      });
+      setGrades(normalized);
     } catch (error) {
       showToast('Error fetching grades', 'error');
     } finally {
@@ -93,7 +108,13 @@ const Grades: React.FC = () => {
   const fetchStudents = async () => {
     try {
       const response = await studentAPI.getAll({ classId: selectedClass });
-      setStudents(response.data.students);
+      const normalized = (response.data.students || []).map((student: any) => ({
+        id: Number(student.id ?? student.studentId ?? student.student_id),
+        firstName: student.firstName ?? student.first_name ?? 'Student',
+        lastName: student.lastName ?? student.last_name ?? '',
+        rollNumber: student.rollNumber ?? student.roll_number ?? null
+      }));
+      setStudents(normalized);
     } catch (error) {
       showToast('Error fetching students', 'error');
     }
@@ -297,7 +318,7 @@ const Grades: React.FC = () => {
               <option value="">Select Student</option>
               {students.map((student) => (
                 <option key={student.id} value={student.id}>
-                  {student.firstName} {student.lastName} ({student.rollNumber || '-'})
+                  {student.firstName} {student.lastName} ({student.rollNumber || 'No Roll'})
                 </option>
               ))}
             </select>
@@ -352,7 +373,7 @@ const Grades: React.FC = () => {
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredGrades.map((grade) => {
                     const isEditing = editingRowId === grade.id;
-                    const percentage = ((grade.marksObtained / grade.maxMarks) * 100).toFixed(2);
+                    const percentage = grade.maxMarks > 0 ? ((grade.marksObtained / grade.maxMarks) * 100).toFixed(2) : '0.00';
                     return (
                     <tr key={grade.id} className="transition hover:bg-slate-50">
                       <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-900">
@@ -426,21 +447,21 @@ const Grades: React.FC = () => {
           <div className="card mt-6 p-6">
             <h3 className="text-xl font-bold text-slate-900">Report Card Preview</h3>
             <p className="mt-1 text-sm text-slate-600">
-              {reportData.student.first_name} {reportData.student.last_name} • Roll {reportData.student.roll_number}
+              {reportData.student.firstName || reportData.student.first_name || reportData.student.firstname} {reportData.student.lastName || reportData.student.last_name || reportData.student.lastname} • Roll {reportData.student.rollNumber || reportData.student.roll_number || reportData.student.rollnumber || 'No Roll'}
             </p>
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="rounded-xl bg-slate-100 p-3">
                 <p className="text-xs uppercase text-slate-500">Overall %</p>
-                <p className="text-xl font-bold text-slate-900">{reportData.overallStats.overall_percentage || 0}%</p>
+                <p className="text-xl font-bold text-slate-900">{reportData.overallStats.overallPercentage ?? reportData.overallStats.overall_percentage ?? reportData.overallStats.overallpercentage ?? 0}%</p>
               </div>
               <div className="rounded-xl bg-emerald-50 p-3">
                 <p className="text-xs uppercase text-emerald-700">Total Exams</p>
-                <p className="text-xl font-bold text-emerald-900">{reportData.overallStats.total_exams || 0}</p>
+                <p className="text-xl font-bold text-emerald-900">{reportData.overallStats.totalExams ?? reportData.overallStats.total_exams ?? reportData.overallStats.totalexams ?? 0}</p>
               </div>
               <div className="rounded-xl bg-sky-50 p-3">
                 <p className="text-xs uppercase text-sky-700">Total Marks</p>
                 <p className="text-xl font-bold text-sky-900">
-                  {reportData.overallStats.total_marks_obtained || 0}/{reportData.overallStats.total_max_marks || 0}
+                  {reportData.overallStats.totalMarksObtained ?? reportData.overallStats.total_marks_obtained ?? reportData.overallStats.totalmarksobtained ?? 0}/{reportData.overallStats.totalMaxMarks ?? reportData.overallStats.total_max_marks ?? reportData.overallStats.totalmaxmarks ?? 0}
                 </p>
               </div>
             </div>
@@ -463,7 +484,7 @@ const Grades: React.FC = () => {
                     <option value="">Select Student</option>
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.firstName} {student.lastName} ({student.rollNumber})
+                        {student.firstName} {student.lastName} ({student.rollNumber || 'No Roll'})
                       </option>
                     ))}
                   </select>

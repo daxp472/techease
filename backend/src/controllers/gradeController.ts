@@ -81,12 +81,23 @@ export const getGradesByClass = async (req: AuthRequest, res: Response) => {
     const { classId, subjectId, examTypeId } = req.query;
 
     let queryText = `
-            SELECT g.id, g.student_id as studentId, g.class_id as classId, g.subject_id as subjectId, g.exam_type_id as examTypeId,
-              g.marks_obtained as marksObtained, g.max_marks as maxMarks, g.grade, g.exam_date as examDate, g.remarks,
-              u.first_name as firstName, u.last_name as lastName, u.email,
-              e.roll_number as rollNumber,
-              s.name as subjectName, s.code as subjectCode,
-              et.name as examTypeName
+            SELECT g.id,
+              g.student_id as "studentId",
+              g.class_id as "classId",
+              g.subject_id as "subjectId",
+              g.exam_type_id as "examTypeId",
+              g.marks_obtained as "marksObtained",
+              g.max_marks as "maxMarks",
+              g.grade,
+              g.exam_date as "examDate",
+              g.remarks,
+              u.first_name as "firstName",
+              u.last_name as "lastName",
+              u.email,
+              e.roll_number as "rollNumber",
+              s.name as "subjectName",
+              s.code as "subjectCode",
+              et.name as "examTypeName"
       FROM grades g
       JOIN users u ON g.student_id = u.id
       LEFT JOIN enrollments e ON e.student_id = g.student_id AND e.class_id = g.class_id
@@ -125,11 +136,23 @@ export const getGradesByStudent = async (req: AuthRequest, res: Response) => {
     const { classId, subjectId } = req.query;
 
     let queryText = `
-            SELECT g.id, g.student_id as studentId, g.class_id as classId, g.subject_id as subjectId, g.exam_type_id as examTypeId,
-              g.marks_obtained as marksObtained, g.max_marks as maxMarks, g.grade, g.exam_date as examDate, g.remarks,
-              s.name as subjectName, s.code as subjectCode,
-              et.name as examTypeName, et.weightage,
-              c.name as className, c.grade as classGrade, c.section
+            SELECT g.id,
+              g.student_id as "studentId",
+              g.class_id as "classId",
+              g.subject_id as "subjectId",
+              g.exam_type_id as "examTypeId",
+              g.marks_obtained as "marksObtained",
+              g.max_marks as "maxMarks",
+              g.grade,
+              g.exam_date as "examDate",
+              g.remarks,
+              s.name as "subjectName",
+              s.code as "subjectCode",
+              et.name as "examTypeName",
+              et.weightage,
+              c.name as "className",
+              c.grade as "classGrade",
+              c.section
       FROM grades g
       LEFT JOIN subjects s ON g.subject_id = s.id
       LEFT JOIN exam_types et ON g.exam_type_id = et.id
@@ -166,9 +189,14 @@ export const getReportCard = async (req: AuthRequest, res: Response) => {
     const { studentId, classId } = req.query;
 
     const studentInfo = await query(
-      `SELECT u.id, u.first_name as firstName, u.last_name as lastName, u.email,
-              e.roll_number as rollNumber,
-              c.name as className, c.grade, c.section
+          `SELECT u.id,
+            u.first_name as "firstName",
+            u.last_name as "lastName",
+            u.email,
+            e.roll_number as "rollNumber",
+            c.name as "className",
+            c.grade,
+            c.section
        FROM users u
        JOIN enrollments e ON u.id = e.student_id
        JOIN classes c ON e.class_id = c.id
@@ -218,10 +246,10 @@ export const getReportCard = async (req: AuthRequest, res: Response) => {
 
     const overallStats = await query(
       `SELECT
-         COUNT(*) as totalExams,
-         ROUND(AVG(g.marks_obtained / g.max_marks * 100), 2) as overallPercentage,
-         SUM(g.marks_obtained) as totalMarksObtained,
-         SUM(g.max_marks) as totalMaxMarks
+         COUNT(*) as "totalExams",
+         ROUND(AVG(g.marks_obtained / g.max_marks * 100), 2) as "overallPercentage",
+         SUM(g.marks_obtained) as "totalMarksObtained",
+         SUM(g.max_marks) as "totalMaxMarks"
        FROM grades g
        WHERE g.student_id = $1 AND g.class_id = $2`,
       [studentId, classId]
@@ -241,7 +269,16 @@ export const getReportCard = async (req: AuthRequest, res: Response) => {
 
 export const getExamTypes = async (req: AuthRequest, res: Response) => {
   try {
-    const result = await query('SELECT * FROM exam_types ORDER BY weightage DESC');
+    const result = await query(
+      `SELECT DISTINCT ON (LOWER(name))
+         id,
+         name,
+         description,
+         weightage,
+         created_at as "createdAt"
+       FROM exam_types
+       ORDER BY LOWER(name), id ASC`
+    );
 
     res.json({
       examTypes: result.rows
