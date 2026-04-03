@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
@@ -186,6 +186,8 @@ const toReviewQuestion = (question: any, index: number): ReviewQuestion => ({
 const Tests: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const didAutoOpenRef = useRef(false);
   const [classes, setClasses] = useState<Class[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedClass, setSelectedClass] = useState('');
@@ -240,6 +242,9 @@ const Tests: React.FC = () => {
   });
   const [questionDrafts, setQuestionDrafts] = useState<DraftQuestion[]>([emptyQuestion(1)]);
 
+  const openTestIdFromQuery = Number(searchParams.get('openTestId') || 0);
+  const classIdFromQuery = searchParams.get('classId') || '';
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -292,6 +297,12 @@ const Tests: React.FC = () => {
     };
     void loadTests();
   }, [selectedClass, showToast]);
+
+  useEffect(() => {
+    if (classIdFromQuery && !selectedClass) {
+      setSelectedClass(classIdFromQuery);
+    }
+  }, [classIdFromQuery, selectedClass]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -542,6 +553,19 @@ const Tests: React.FC = () => {
       setResultsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (didAutoOpenRef.current) return;
+    if (!openTestIdFromQuery) return;
+    if (loading) return;
+
+    didAutoOpenRef.current = true;
+    void openTestDetails(openTestIdFromQuery).finally(() => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('openTestId');
+      setSearchParams(next, { replace: true });
+    });
+  }, [openTestIdFromQuery, loading, searchParams, setSearchParams]);
 
   const updateReviewQuestion = (index: number, patch: Partial<ReviewQuestion>) => {
     setReviewQuestions((current) => current.map((question, questionIndex) => (

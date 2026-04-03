@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { analyticsAPI, classAPI } from '../services/api';
 import { ClassAnalytics, Class } from '../types';
@@ -543,7 +544,14 @@ const Analytics: React.FC = () => {
                       {(analytics.testPerformance || []).length > 0 ? (
                         analytics.testPerformance!.map((test) => (
                           <tr key={test.id}>
-                            <td className="px-4 py-3 font-medium text-slate-900">{test.title}</td>
+                            <td className="px-4 py-3 font-medium text-slate-900">
+                              <Link
+                                to={`/tests?openTestId=${test.id}&classId=${selectedClass}`}
+                                className="text-teal-700 hover:text-teal-800 hover:underline"
+                              >
+                                {test.title}
+                              </Link>
+                            </td>
                             <td className="px-4 py-3 capitalize text-slate-600">{test.status}</td>
                             <td className="px-4 py-3 text-slate-700">{test.totalSubmissions}</td>
                             <td className="px-4 py-3 text-slate-700">{test.gradedSubmissions}</td>
