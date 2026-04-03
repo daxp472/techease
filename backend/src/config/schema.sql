@@ -95,6 +95,12 @@ CREATE TABLE IF NOT EXISTS exam_types (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Remove duplicate exam type names created by repeated startup seeding
+DELETE FROM exam_types e
+USING exam_types e2
+WHERE e.id > e2.id
+  AND LOWER(e.name) = LOWER(e2.name);
+
 -- Grades/Marks Table
 CREATE TABLE IF NOT EXISTS grades (
   id SERIAL PRIMARY KEY,
@@ -125,6 +131,26 @@ CREATE TABLE IF NOT EXISTS timetable (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Remove duplicate timetable rows created by repeated seeding (keep oldest row)
+DELETE FROM timetable t
+USING timetable t2
+WHERE t.id > t2.id
+  AND t.class_id = t2.class_id
+  AND t.day_of_week = t2.day_of_week
+  AND t.start_time = t2.start_time
+  AND t.end_time = t2.end_time;
+
+-- Remove teacher time-slot collisions (same teacher, same day/time) by keeping oldest row
+DELETE FROM timetable t
+USING timetable t2
+WHERE t.id > t2.id
+  AND t.teacher_id IS NOT NULL
+  AND t2.teacher_id IS NOT NULL
+  AND t.teacher_id = t2.teacher_id
+  AND t.day_of_week = t2.day_of_week
+  AND t.start_time = t2.start_time
+  AND t.end_time = t2.end_time;
 
 -- Announcements Table
 CREATE TABLE IF NOT EXISTS announcements (
@@ -258,6 +284,7 @@ CREATE TABLE IF NOT EXISTS test_answers (
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_exam_types_name ON exam_types(LOWER(name));
 CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_enrollments_student ON enrollments(student_id);
 CREATE INDEX IF NOT EXISTS idx_enrollments_class ON enrollments(class_id);
@@ -266,6 +293,8 @@ CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);
 CREATE INDEX IF NOT EXISTS idx_grades_student ON grades(student_id);
 CREATE INDEX IF NOT EXISTS idx_timetable_class ON timetable(class_id);
 CREATE INDEX IF NOT EXISTS idx_timetable_teacher ON timetable(teacher_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_timetable_class_slot ON timetable(class_id, day_of_week, start_time, end_time);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_timetable_teacher_slot ON timetable(teacher_id, day_of_week, start_time, end_time) WHERE teacher_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_syllabuses_class ON syllabuses(class_id);
 CREATE INDEX IF NOT EXISTS idx_syllabuses_subject ON syllabuses(subject_id);
 CREATE INDEX IF NOT EXISTS idx_syllabus_topics_syllabus ON syllabus_topics(syllabus_id);
@@ -283,7 +312,7 @@ INSERT INTO exam_types (name, description, weightage) VALUES
   ('Final Exam', 'End-semester examination', 60.00),
   ('Assignment', 'Project and assignment marks', 10.00),
   ('Quiz', 'Quick assessment tests', 5.00)
-ON CONFLICT DO NOTHING;
+ON CONFLICT ((LOWER(name))) DO NOTHING;
 
 -- Insert default subjects
 INSERT INTO subjects (name, code, description) VALUES

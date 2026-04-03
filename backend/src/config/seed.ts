@@ -15,28 +15,75 @@ export const seedDatabase = async () => {
          ('student2@demo.com', $1, 'Bob', 'Williams', 'student', '123-456-7892'),
          ('student3@demo.com', $1, 'Charlie', 'Brown', 'student', '123-456-7893'),
          ('student4@demo.com', $1, 'Diana', 'Davis', 'student', '123-456-7894'),
-         ('student5@demo.com', $1, 'Eve', 'Martinez', 'student', '123-456-7895')
+         ('student5@demo.com', $1, 'Eve', 'Martinez', 'student', '123-456-7895'),
+         ('student6@demo.com', $1, 'Fiona', 'Clark', 'student', '123-456-7896'),
+         ('student7@demo.com', $1, 'George', 'Lopez', 'student', '123-456-7897'),
+         ('student8@demo.com', $1, 'Hannah', 'Young', 'student', '123-456-7898'),
+         ('student9@demo.com', $1, 'Ian', 'King', 'student', '123-456-7899'),
+         ('student10@demo.com', $1, 'Julia', 'Scott', 'student', '123-456-7900')
        ON CONFLICT (email) DO NOTHING`,
       [hashedPassword]
     );
 
+    const teacherResult = await pool.query(
+      `SELECT id FROM users WHERE email = 'teacher@demo.com' LIMIT 1`
+    );
+    const teacherId = teacherResult.rows[0]?.id;
+
     await pool.query(
       `INSERT INTO classes (name, grade, section, academic_year, teacher_id, room_number)
        VALUES
-         ('Mathematics A', '10', 'A', '2024-2025', 1, '101'),
-         ('Science B', '10', 'B', '2024-2025', 1, '102')
+         ('Mathematics A', '10', 'A', '2024-2025', $1, '101'),
+         ('Science B', '10', 'B', '2024-2025', $1, '102')
        ON CONFLICT (grade, section, academic_year) DO NOTHING`
+      ,
+      [teacherId]
     );
 
     await pool.query(
-      `INSERT INTO enrollments (student_id, class_id, roll_number, status)
-       VALUES
-         (2, 1, '001', 'active'),
-         (3, 1, '002', 'active'),
-         (4, 1, '003', 'active'),
-         (5, 1, '004', 'active'),
-         (6, 1, '005', 'active')
-       ON CONFLICT (student_id, class_id) DO NOTHING`
+      `UPDATE classes
+       SET teacher_id = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE academic_year = '2024-2025' AND grade = '10' AND section IN ('A', 'B')`,
+      [teacherId]
+    );
+
+    await pool.query(
+      `UPDATE timetable t
+       SET teacher_id = $1, updated_at = CURRENT_TIMESTAMP
+       FROM classes c
+       WHERE t.class_id = c.id
+         AND c.academic_year = '2024-2025'
+         AND c.grade = '10'
+         AND c.section IN ('A', 'B')`,
+      [teacherId]
+    );
+
+    await pool.query(
+      `WITH target_enrollments AS (
+         SELECT u.id as student_id, c.id as class_id, v.roll_number
+         FROM (VALUES
+           ('student1@demo.com', '10', 'A', '001'),
+           ('student2@demo.com', '10', 'A', '002'),
+           ('student3@demo.com', '10', 'A', '003'),
+           ('student4@demo.com', '10', 'A', '004'),
+           ('student5@demo.com', '10', 'A', '005'),
+           ('student6@demo.com', '10', 'B', '001'),
+           ('student7@demo.com', '10', 'B', '002'),
+           ('student8@demo.com', '10', 'B', '003'),
+           ('student9@demo.com', '10', 'B', '004'),
+           ('student10@demo.com', '10', 'B', '005')
+         ) AS v(email, grade, section, roll_number)
+         JOIN users u ON u.email = v.email
+         JOIN classes c ON c.grade = v.grade AND c.section = v.section AND c.academic_year = '2024-2025'
+       )
+       INSERT INTO enrollments (student_id, class_id, roll_number, status)
+       SELECT student_id, class_id, roll_number, 'active'
+       FROM target_enrollments
+       ON CONFLICT (student_id, class_id)
+       DO UPDATE
+         SET roll_number = EXCLUDED.roll_number,
+             status = 'active',
+             updated_at = CURRENT_TIMESTAMP`
     );
     
       // Seed Timetable Data - Full week schedule for classes
