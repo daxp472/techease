@@ -4,10 +4,13 @@ import 'package:provider/provider.dart';
 import 'core/theme/app_theme.dart';
 import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
+import 'screens/student_home_shell.dart';
 import 'services/api_client.dart';
 import 'services/attendance_service.dart';
 import 'services/class_service.dart';
+import 'services/grade_service.dart';
 import 'services/student_service.dart';
+import 'services/timetable_service.dart';
 import 'state/auth_controller.dart';
 
 Future<void> main() async {
@@ -33,6 +36,8 @@ class TeachEaseApp extends StatelessWidget {
         Provider(create: (_) => ClassService(apiClient)),
         Provider(create: (_) => StudentService(apiClient)),
         Provider(create: (_) => AttendanceService(apiClient)),
+        Provider(create: (_) => GradeService(apiClient)),
+        Provider(create: (_) => TimetableService(apiClient)),
       ],
       child: MaterialApp(
         title: 'TeachEase Mobile',
@@ -59,6 +64,10 @@ class AppBootstrap extends StatelessWidget {
 
     if (auth.user == null) {
       return const LoginScreen();
+    }
+
+    if (auth.user?.role == 'student') {
+      return const StudentHomeShell();
     }
 
     return HomeShell(
