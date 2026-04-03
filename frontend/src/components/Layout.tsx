@@ -198,7 +198,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <aside
           className={`${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          } fixed inset-y-0 left-0 z-40 mt-16 w-72 border-r border-slate-200 bg-white/95 px-3 transition-transform duration-300 ease-in-out lg:static lg:mt-0 lg:translate-x-0`}
+          } fixed bottom-0 left-0 top-16 z-40 w-72 overflow-y-auto border-r border-slate-200 bg-white/95 px-3 transition-transform duration-300 ease-in-out lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:translate-x-0`}
         >
           <nav className="mt-5 px-2">
             {visibleMenuItems.map((item) => {

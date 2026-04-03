@@ -36,7 +36,12 @@ function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <Router>
+        <Router
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true
+          }}
+        >
           <Suspense fallback={<LoadingState message="Loading page..." />}>
             <Routes>
           <Route path="/login" element={<Login />} />

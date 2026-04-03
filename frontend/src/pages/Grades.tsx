@@ -57,8 +57,19 @@ const Grades: React.FC = () => {
     if (selectedClass) {
       fetchGrades();
       fetchStudents();
+    } else {
+      setGrades([]);
+      setStudents([]);
+      setReportStudentId('');
+      setReportData(null);
     }
   }, [selectedClass]);
+
+  useEffect(() => {
+    if (selectedClass && reportStudentId) {
+      void generateReport();
+    }
+  }, [reportStudentId, selectedClass]);
 
   const fetchClasses = async () => {
     try {
@@ -186,10 +197,18 @@ const Grades: React.FC = () => {
   };
 
   const filteredGrades = useMemo(
-    () => grades.filter((grade) => `${grade.firstName} ${grade.lastName} ${grade.subjectName} ${grade.examTypeName}`
-      .toLowerCase()
-      .includes(search.toLowerCase())),
-    [grades, search]
+    () => {
+      const studentScopedGrades = reportStudentId
+        ? grades.filter((grade) => Number(grade.studentId) === Number(reportStudentId))
+        : grades;
+
+      return studentScopedGrades.filter((grade) =>
+        `${grade.firstName} ${grade.lastName} ${grade.subjectName} ${grade.examTypeName}`
+          .toLowerCase()
+          .includes(search.toLowerCase())
+      );
+    },
+    [grades, search, reportStudentId]
   );
 
   const averageScore = useMemo(() => {
@@ -283,6 +302,7 @@ const Grades: React.FC = () => {
               value={selectedClass}
               onChange={(e) => {
                 setSelectedClass(e.target.value);
+                setReportStudentId('');
                 setReportData(null);
               }}
               className="input-base md:w-1/2"
@@ -375,7 +395,11 @@ const Grades: React.FC = () => {
                     const isEditing = editingRowId === grade.id;
                     const percentage = grade.maxMarks > 0 ? ((grade.marksObtained / grade.maxMarks) * 100).toFixed(2) : '0.00';
                     return (
-                    <tr key={grade.id} className="transition hover:bg-slate-50">
+                    <tr
+                      key={grade.id}
+                      className="cursor-pointer transition hover:bg-slate-50"
+                      onClick={() => setReportStudentId(String(grade.studentId))}
+                    >
                       <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-900">
                         {grade.firstName} {grade.lastName}
                       </td>
@@ -463,6 +487,58 @@ const Grades: React.FC = () => {
                 <p className="text-xl font-bold text-sky-900">
                   {reportData.overallStats.totalMarksObtained ?? reportData.overallStats.total_marks_obtained ?? reportData.overallStats.totalmarksobtained ?? 0}/{reportData.overallStats.totalMaxMarks ?? reportData.overallStats.total_max_marks ?? reportData.overallStats.totalmaxmarks ?? 0}
                 </p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div>
+                <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Subject-wise Summary</h4>
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Subject</th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Avg %</th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Exams</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {(reportData.subjectWiseStats || []).map((row: any, idx: number) => (
+                        <tr key={`${row.subjectName || 'subject'}-${idx}`}>
+                          <td className="px-4 py-2 text-sm text-slate-800">{row.subjectName}</td>
+                          <td className="px-4 py-2 text-sm text-slate-800">{row.averagePercentage || 0}%</td>
+                          <td className="px-4 py-2 text-sm text-slate-800">{row.totalExams || 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Exam Details</h4>
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Subject</th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Exam</th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Marks</th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">%</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {(reportData.grades || []).map((row: any, idx: number) => (
+                        <tr key={`${row.subjectName || 'exam'}-${idx}`}>
+                          <td className="px-4 py-2 text-sm text-slate-800">{row.subjectName}</td>
+                          <td className="px-4 py-2 text-sm text-slate-800">{row.examTypeName}</td>
+                          <td className="px-4 py-2 text-sm text-slate-800">{row.marks_obtained}/{row.max_marks}</td>
+                          <td className="px-4 py-2 text-sm text-slate-800">{row.percentage || 0}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
