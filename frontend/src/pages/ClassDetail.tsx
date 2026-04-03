@@ -48,7 +48,7 @@ const ClassDetail: React.FC = () => {
       <div>
         <PageHeader
           title={classData.name}
-          description={`Grade ${classData.grade} ${classData.section} • ${classData.academicYear}`}
+          description={`Grade ${classData.grade} ${classData.section} • ${(classData as any).academicYear || (classData as any).academicyear || '-'}`}
           actions={<Link to="/classes" className="btn-secondary">Back to Classes</Link>}
         />
 
@@ -56,9 +56,9 @@ const ClassDetail: React.FC = () => {
           <div className="card p-6 lg:col-span-1">
             <h3 className="text-lg font-semibold text-slate-900 mb-4">Class Info</h3>
             <div className="space-y-3 text-sm text-slate-700">
-              <p><span className="font-semibold">Room:</span> {classData.roomNumber || '-'}</p>
-              <p><span className="font-semibold">Teacher:</span> {(classData as any).teacherFirstName || '-'} {(classData as any).teacherLastName || ''}</p>
-              <p><span className="font-semibold">Students:</span> {(classData as any).studentCount || students.length}</p>
+              <p><span className="font-semibold">Room:</span> {(classData as any).roomNumber || (classData as any).roomnumber || '-'}</p>
+              <p><span className="font-semibold">Teacher:</span> {(classData as any).teacherFirstName || (classData as any).teacherfirstname || '-'} {(classData as any).teacherLastName || (classData as any).teacherlastname || ''}</p>
+              <p><span className="font-semibold">Students:</span> {(classData as any).studentCount || (classData as any).studentcount || students.length}</p>
             </div>
           </div>
 
@@ -69,8 +69,8 @@ const ClassDetail: React.FC = () => {
                 {students.map((student) => (
                   <Link key={student.id} to={`/students/${student.id}`} className="flex items-center justify-between rounded-xl border border-slate-200 p-3 hover:bg-slate-50">
                     <div>
-                      <p className="font-medium text-slate-900">{student.firstName} {student.lastName}</p>
-                      <p className="text-sm text-slate-500">Roll {student.rollNumber || '-'}</p>
+                      <p className="font-medium text-slate-900">{(student as any).firstName || (student as any).firstname || ''} {(student as any).lastName || (student as any).lastname || ''}</p>
+                      <p className="text-sm text-slate-500">Roll {(student as any).rollNumber || (student as any).rollnumber || '-'}</p>
                     </div>
                     <span className="text-sm text-slate-500">View profile</span>
                   </Link>

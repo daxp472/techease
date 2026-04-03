@@ -54,24 +54,55 @@ export const getAllStudents = async (req: AuthRequest, res: Response) => {
     const { classId, search } = req.query;
 
     let queryText = `
-          SELECT DISTINCT u.id, u.email, u.first_name as firstName, u.last_name as lastName, u.phone, u.profile_image as profileImage, u.created_at as createdAt,
-            e.roll_number as rollNumber, e.status as enrollmentStatus,
-            c.id as classId, c.name as className, c.grade, c.section
+      SELECT DISTINCT
+        u.id,
+        u.email,
+        u.first_name as "firstName",
+        u.last_name as "lastName",
+        u.phone,
+        u.profile_image as "profileImage",
+        u.created_at as "createdAt",
+        e.roll_number as "rollNumber",
+        e.status as "enrollmentStatus",
+        c.id as "classId",
+        c.name as "className",
+        c.grade,
+        c.section
       FROM users u
-      LEFT JOIN enrollments e ON u.id = e.student_id
-      LEFT JOIN classes c ON e.class_id = c.id
-      WHERE u.role = 'student'
     `;
     const params: any[] = [];
 
     if (classId) {
+      queryText += `
+        JOIN enrollments e ON u.id = e.student_id AND e.class_id = $1 AND e.status = 'active'
+        LEFT JOIN classes c ON e.class_id = c.id
+      `;
       params.push(classId);
-      queryText += ` AND e.class_id = $${params.length}`;
+    } else {
+      queryText += `
+        LEFT JOIN LATERAL (
+          SELECT e1.class_id, e1.roll_number, e1.status
+          FROM enrollments e1
+          WHERE e1.student_id = u.id AND e1.status = 'active'
+          ORDER BY e1.updated_at DESC, e1.id DESC
+          LIMIT 1
+        ) e ON true
+        LEFT JOIN classes c ON e.class_id = c.id
+      `;
     }
+
+    queryText += ` WHERE u.role = 'student'`;
 
     if (search) {
       params.push(`%${search}%`);
-      queryText += ` AND (u.first_name ILIKE $${params.length} OR u.last_name ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
+      queryText += `
+        AND (
+          u.first_name ILIKE $${params.length}
+          OR u.last_name ILIKE $${params.length}
+          OR u.email ILIKE $${params.length}
+          OR COALESCE(e.roll_number, '') ILIKE $${params.length}
+        )
+      `;
     }
 
     queryText += ' ORDER BY e.roll_number, u.first_name, u.last_name';
@@ -115,14 +146,14 @@ export const getStudentById = async (req: AuthRequest, res: Response) => {
         lastName: student.lastname || student.lastName,
         phone: student.phone,
         profileImage: student.profileimage || student.profileImage,
-        rollNumber: student.rollnumber || student.rollNumber,
-        enrollmentStatus: student.enrollmentstatus || student.enrollmentStatus,
+        rollNumber: student.rollnumber || student.rollNumber || student.roll_number,
+        enrollmentStatus: student.enrollmentstatus || student.enrollmentStatus || student.enrollment_status,
         enrollmentDate: student.enrollment_date,
-        classId: student.classid || student.classId,
-        className: student.classname || student.className,
+        classId: student.classid || student.classId || student.class_id,
+        className: student.classname || student.className || student.class_name,
         grade: student.grade,
         section: student.section,
-        createdAt: student.createdat || student.createdAt
+        createdAt: student.createdat || student.createdAt || student.created_at
       }
     });
   } catch (error) {
@@ -148,12 +179,13 @@ export const updateStudent = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: 'Student not found' });
     }
 
-    if (classId && rollNumber !== undefined) {
+    if (classId) {
       await query(
-        `UPDATE enrollments
-         SET roll_number = $1, updated_at = CURRENT_TIMESTAMP
-         WHERE student_id = $2 AND class_id = $3`,
-        [rollNumber, id, classId]
+        `INSERT INTO enrollments (student_id, class_id, roll_number, status)
+         VALUES ($1, $2, $3, 'active')
+         ON CONFLICT (student_id, class_id)
+         DO UPDATE SET roll_number = EXCLUDED.roll_number, status = 'active', updated_at = CURRENT_TIMESTAMP`,
+        [id, classId, rollNumber || null]
       );
     }
 

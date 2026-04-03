@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Layout from '../components/Layout';
 import { attendanceAPI, classAPI } from '../services/api';
-import { Attendance as AttendanceType, Class } from '../types';
+import { Class } from '../types';
 import { CheckCircle, XCircle, Clock3, Download, FileDown, Save } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import LoadingState from '../components/ui/LoadingState';
@@ -60,14 +60,22 @@ const Attendance: React.FC = () => {
         date: selectedDate
       });
 
-      const studentsList = studentsRes.data.students || [];
+      const studentsList = (studentsRes.data.students || []).map((student: any) => ({
+        id: Number(student.id ?? student.studentId ?? student.student_id),
+        firstName: student.firstName ?? student.first_name ?? student.firstname ?? '',
+        lastName: student.lastName ?? student.last_name ?? student.lastname ?? '',
+        rollNumber: student.rollNumber ?? student.roll_number ?? student.rollnumber ?? null
+      }));
       setStudents(studentsList);
 
       const attendanceMap: { [key: number]: string } = {};
       const attendanceList = attendanceRes.data.attendance || [];
       
-      attendanceList.forEach((att: AttendanceType) => {
-        attendanceMap[att.studentId] = att.status;
+      attendanceList.forEach((att: any) => {
+        const studentId = Number(att.studentId ?? att.student_id);
+        if (Number.isFinite(studentId)) {
+          attendanceMap[studentId] = att.status;
+        }
       });
       
       setAttendance(attendanceMap);
@@ -100,7 +108,7 @@ const Attendance: React.FC = () => {
     }
 
     // Check if all students have been marked
-    const allMarked = students.every((s: any) => attendance[s.id]);
+    const allMarked = students.every((s: any) => Boolean(attendance[s.id]));
     if (!allMarked) {
       showToast('Please mark attendance for all students before submitting', 'error');
       return;

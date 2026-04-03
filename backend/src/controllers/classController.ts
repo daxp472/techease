@@ -31,10 +31,13 @@ export const getAllClasses = async (req: AuthRequest, res: Response) => {
     const { teacherId, academicYear } = req.query;
 
     let queryText = `
-            SELECT c.id, c.name, c.grade, c.section, c.academic_year as academicYear, c.teacher_id as teacherId, c.room_number as roomNumber,
-              u.first_name as teacherFirstName,
-              u.last_name as teacherLastName,
-              COUNT(DISTINCT e.student_id) as studentCount
+            SELECT c.id, c.name, c.grade, c.section,
+              c.academic_year as "academicYear",
+              c.teacher_id as "teacherId",
+              c.room_number as "roomNumber",
+              u.first_name as "teacherFirstName",
+              u.last_name as "teacherLastName",
+              COUNT(DISTINCT e.student_id)::int as "studentCount"
       FROM classes c
       LEFT JOIN users u ON c.teacher_id = u.id
       LEFT JOIN enrollments e ON c.id = e.class_id AND e.status = 'active'
@@ -70,11 +73,14 @@ export const getClassById = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
 
     const result = await query(
-      `SELECT c.id, c.name, c.grade, c.section, c.academic_year as academicYear, c.teacher_id as teacherId, c.room_number as roomNumber,
-              u.first_name as teacherFirstName,
-              u.last_name as teacherLastName,
-              u.email as teacherEmail,
-              COUNT(DISTINCT e.student_id) as studentCount
+          `SELECT c.id, c.name, c.grade, c.section,
+            c.academic_year as "academicYear",
+            c.teacher_id as "teacherId",
+            c.room_number as "roomNumber",
+            u.first_name as "teacherFirstName",
+            u.last_name as "teacherLastName",
+            u.email as "teacherEmail",
+            COUNT(DISTINCT e.student_id)::int as "studentCount"
        FROM classes c
        LEFT JOIN users u ON c.teacher_id = u.id
        LEFT JOIN enrollments e ON c.id = e.class_id AND e.status = 'active'
@@ -147,8 +153,14 @@ export const getClassStudents = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
 
     const result = await query(
-      `SELECT u.id, u.email, u.first_name as firstName, u.last_name as lastName, u.phone, u.profile_image as profileImage,
-              e.roll_number as rollNumber, e.enrollment_date as enrollmentDate, e.status as enrollmentStatus
+          `SELECT u.id, u.email,
+            u.first_name as "firstName",
+            u.last_name as "lastName",
+            u.phone,
+            u.profile_image as "profileImage",
+            e.roll_number as "rollNumber",
+            e.enrollment_date as "enrollmentDate",
+            e.status as "enrollmentStatus"
        FROM users u
        JOIN enrollments e ON u.id = e.student_id
        WHERE e.class_id = $1 AND u.role = 'student'

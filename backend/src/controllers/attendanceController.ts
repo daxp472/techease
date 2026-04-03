@@ -92,10 +92,19 @@ export const getAttendanceByClass = async (req: AuthRequest, res: Response) => {
     const { classId, date, subjectId } = req.query;
 
     let queryText = `
-      SELECT a.*,
-             u.first_name, u.last_name, u.email,
-             e.roll_number,
-             s.name as subject_name
+      SELECT a.id,
+             a.student_id as "studentId",
+             a.class_id as "classId",
+             a.subject_id as "subjectId",
+             a.date,
+             a.status,
+             a.remarks,
+             a.marked_by as "markedBy",
+             u.first_name as "firstName",
+             u.last_name as "lastName",
+             u.email,
+             e.roll_number as "rollNumber",
+             s.name as "subjectName"
       FROM attendance a
       JOIN users u ON a.student_id = u.id
       LEFT JOIN enrollments e ON e.student_id = a.student_id AND e.class_id = a.class_id
