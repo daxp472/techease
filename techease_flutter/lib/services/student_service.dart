@@ -18,4 +18,18 @@ class StudentService {
         .map(Student.fromJson)
         .toList();
   }
+
+  Future<Student> fetchStudentById(int studentId) async {
+    final payload = await apiClient.get('/students/$studentId');
+    if (payload is! Map<String, dynamic>) {
+      throw ApiException('Unexpected student details response from server', 500);
+    }
+
+    final dynamic studentJson = payload['student'] ?? payload;
+    if (studentJson is! Map<String, dynamic>) {
+      throw ApiException('Student details not found in response', 500);
+    }
+
+    return Student.fromJson(studentJson);
+  }
 }

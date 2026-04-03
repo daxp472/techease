@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/student.dart';
+import '../services/api_client.dart';
 import '../services/student_service.dart';
 
 class StudentsScreen extends StatefulWidget {
@@ -33,10 +34,75 @@ class _StudentsScreenState extends State<StudentsScreen> {
       final list = await widget.studentService.fetchStudents(search: query);
       setState(() => students = list);
     } catch (e) {
-      setState(() => error = e.toString());
+      if (e is ApiException) {
+        setState(() => error = e.message);
+      } else {
+        setState(() => error = e.toString());
+      }
     } finally {
       setState(() => loading = false);
     }
+  }
+
+  Future<void> _openStudentDetails(Student student) async {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(student.fullName),
+          content: FutureBuilder<Student>(
+            future: widget.studentService.fetchStudentById(student.id),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SizedBox(
+                  height: 120,
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+
+              if (snapshot.hasError) {
+                final message = snapshot.error is ApiException
+                    ? (snapshot.error as ApiException).message
+                    : snapshot.error.toString();
+                return Text(message);
+              }
+
+              final details = snapshot.data;
+              if (details == null) {
+                return const Text('No student details available.');
+              }
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Email: ${details.email}'),
+                  const SizedBox(height: 6),
+                  Text('Phone: ${details.phone ?? '-'}'),
+                  const SizedBox(height: 6),
+                  Text('Roll Number: ${details.rollNumber ?? '-'}'),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Class: ${details.className ?? '-'}'
+                    '${(details.grade ?? '').isNotEmpty ? ' (Grade ${details.grade})' : ''}'
+                    '${(details.section ?? '').isNotEmpty ? ' - ${details.section}' : ''}',
+                  ),
+                  const SizedBox(height: 6),
+                  Text('Enrollment: ${details.enrollmentStatus ?? '-'}'),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            )
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -59,6 +125,8 @@ class _StudentsScreenState extends State<StudentsScreen> {
               ? const Center(child: CircularProgressIndicator())
               : error != null
                   ? Center(child: Text(error!))
+                  : students.isEmpty
+                      ? const Center(child: Text('No students found.'))
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView.separated(
@@ -73,6 +141,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                               title: Text(item.fullName),
                               subtitle: Text(item.email),
                               trailing: Text(item.rollNumber ?? '-'),
+                              onTap: () => _openStudentDetails(item),
                             ),
                           );
                         },
