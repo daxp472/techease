@@ -9,6 +9,80 @@ const normalizeAnswerValue = (answer: any): string => {
   return String(answer).trim();
 };
 
+const serializeStudentAnswer = (answer: any): string => {
+  if (Array.isArray(answer)) {
+    const normalized = Array.from(
+      new Set(
+        answer
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value))
+      )
+    );
+    return JSON.stringify(normalized);
+  }
+
+  return normalizeAnswerValue(answer);
+};
+
+const parseStudentAnswerIds = (answer: any): number[] => {
+  if (Array.isArray(answer)) {
+    return Array.from(
+      new Set(
+        answer
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value))
+      )
+    );
+  }
+
+  const normalized = normalizeAnswerValue(answer);
+  if (!normalized) {
+    return [];
+  }
+
+  if (normalized.startsWith('[') && normalized.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(normalized);
+      if (Array.isArray(parsed)) {
+        return Array.from(
+          new Set(
+            parsed
+              .map((value) => Number(value))
+              .filter((value) => Number.isFinite(value))
+          )
+        );
+      }
+    } catch {
+      // Fall through to legacy parsing formats.
+    }
+  }
+
+  if (normalized.includes(',')) {
+    return Array.from(
+      new Set(
+        normalized
+          .split(',')
+          .map((value) => Number(value.trim()))
+          .filter((value) => Number.isFinite(value))
+      )
+    );
+  }
+
+  const single = Number(normalized);
+  return Number.isFinite(single) ? [single] : [];
+};
+
+const areNumberSetsEqual = (left: number[], right: number[]): boolean => {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const leftSorted = [...left].sort((a, b) => a - b);
+  const rightSorted = [...right].sort((a, b) => a - b);
+
+  return leftSorted.every((value, index) => value === rightSorted[index]);
+};
+
 const toTime = (value: any): number | null => {
   if (!value) return null;
   const parsed = new Date(value).getTime();
@@ -418,9 +492,11 @@ export const getTest = async (req: Request, res: Response) => {
         const filteredOptions = Array.isArray(question.options)
           ? question.options.filter((option: any) => option && option.id)
           : [];
+        const allowsMultiple = filteredOptions.filter((option: any) => Boolean(option?.isCorrect)).length > 1;
 
         return {
           ...question,
+          allowsMultiple,
           correctAnswer: undefined,
           correct_answer: undefined,
           options: filteredOptions.map((option: any) => ({
@@ -683,31 +759,32 @@ export const submitTestAnswers = async (req: Request, res: Response) => {
 
       let isCorrect = false;
       let pointsAwarded = 0;
-      const studentAnswer = normalizeAnswerValue(answer?.answer);
+      const studentAnswer = serializeStudentAnswer(answer?.answer);
 
       if (question.question_type === 'mcq' && studentAnswer) {
-        const candidateId = Number(studentAnswer);
-        if (Number.isFinite(candidateId)) {
-          const optionResult = await pool.query(
-            'SELECT is_correct FROM question_options WHERE id = $1',
-            [candidateId]
+        const selectedAnswers = parseStudentAnswerIds(answer?.answer);
+        if (selectedAnswers.length > 0) {
+          const correctOptionsResult = await pool.query(
+            `SELECT id, option_number
+             FROM question_options
+             WHERE question_id = $1 AND is_correct = true`,
+            [questionId]
           );
 
-          if (optionResult.rows.length > 0 && Boolean(optionResult.rows[0].is_correct)) {
+          const correctByOptionId = correctOptionsResult.rows
+            .map((option: any) => Number(option.id))
+            .filter((value: number) => Number.isFinite(value));
+          const correctByOptionNumber = correctOptionsResult.rows
+            .map((option: any) => Number(option.option_number))
+            .filter((value: number) => Number.isFinite(value));
+
+          const idBasedMatch = areNumberSetsEqual(selectedAnswers, correctByOptionId);
+          const numberBasedMatch = areNumberSetsEqual(selectedAnswers, correctByOptionNumber);
+
+          if (idBasedMatch || numberBasedMatch) {
             isCorrect = true;
             pointsAwarded = questionPoints;
             totalScore += pointsAwarded;
-          } else {
-            const fallbackOptionResult = await pool.query(
-              'SELECT is_correct FROM question_options WHERE question_id = $1 AND option_number = $2',
-              [questionId, candidateId]
-            );
-
-            if (fallbackOptionResult.rows.length > 0 && Boolean(fallbackOptionResult.rows[0].is_correct)) {
-              isCorrect = true;
-              pointsAwarded = questionPoints;
-              totalScore += pointsAwarded;
-            }
           }
         }
       } else if (question.question_type === 'true_false' && studentAnswer) {
@@ -840,7 +917,7 @@ export const saveTestProgress = async (req: Request, res: Response) => {
          DO UPDATE SET
            student_answer = EXCLUDED.student_answer,
            updated_at = CURRENT_TIMESTAMP`,
-        [submissionId, Number(answer.questionId), normalizeAnswerValue(answer.answer)]
+        [submissionId, Number(answer.questionId), serializeStudentAnswer(answer.answer)]
       );
     }
 
@@ -912,6 +989,225 @@ export const getStudentTestProgress = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error loading test progress:', error);
     return res.status(500).json({ message: 'Error loading test progress' });
+  }
+};
+
+export const reportQuestionIssue = async (req: Request, res: Response) => {
+  try {
+    const { testId, questionId } = req.params;
+    const { issueType, comment } = req.body;
+    const studentId = (req as any).user?.id;
+    const role = (req as any).user?.role;
+
+    if (role !== 'student') {
+      return res.status(403).json({ message: 'Only students can report question issues' });
+    }
+
+    const normalizedIssueType = String(issueType || '').trim();
+    const allowedIssueTypes = new Set(['wrong_question', 'incorrect_answer', 'option_issue', 'unclear', 'typo', 'other']);
+    if (!allowedIssueTypes.has(normalizedIssueType)) {
+      return res.status(400).json({ message: 'Invalid issue type' });
+    }
+
+    const testAndQuestionResult = await pool.query(
+      `SELECT t.id, t.class_id, t.status, t.start_time, t.end_time,
+              tq.id as question_id
+       FROM tests t
+       JOIN test_questions tq ON tq.test_id = t.id
+       JOIN enrollments e ON e.class_id = t.class_id AND e.student_id = $3 AND e.status = 'active'
+       WHERE t.id = $1 AND tq.id = $2
+       LIMIT 1`,
+      [Number(testId), Number(questionId), studentId]
+    );
+
+    if (testAndQuestionResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Question not found for this student test' });
+    }
+
+    if (!isStudentWindowOpen(testAndQuestionResult.rows[0])) {
+      return res.status(403).json({ message: 'Question reporting is available only during active test window' });
+    }
+
+    const submissionResult = await pool.query(
+      `SELECT id
+       FROM test_submissions
+       WHERE test_id = $1 AND student_id = $2
+       ORDER BY id DESC
+       LIMIT 1`,
+      [Number(testId), studentId]
+    );
+
+    const submissionId = submissionResult.rows[0]?.id ? Number(submissionResult.rows[0].id) : null;
+
+    const existingOpenReport = await pool.query(
+      `SELECT id
+       FROM test_question_reports
+       WHERE test_id = $1 AND question_id = $2 AND student_id = $3 AND status = 'open'
+       ORDER BY id DESC
+       LIMIT 1`,
+      [Number(testId), Number(questionId), studentId]
+    );
+
+    if (existingOpenReport.rows.length > 0) {
+      const updated = await pool.query(
+        `UPDATE test_question_reports
+         SET issue_type = $1,
+             comment = $2,
+             submission_id = COALESCE($3, submission_id),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $4
+         RETURNING *`,
+        [normalizedIssueType, String(comment || '').trim() || null, submissionId, Number(existingOpenReport.rows[0].id)]
+      );
+
+      return res.json({
+        message: 'Question issue updated successfully',
+        report: updated.rows[0]
+      });
+    }
+
+    const created = await pool.query(
+      `INSERT INTO test_question_reports (test_id, question_id, student_id, submission_id, issue_type, comment)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        Number(testId),
+        Number(questionId),
+        studentId,
+        submissionId,
+        normalizedIssueType,
+        String(comment || '').trim() || null
+      ]
+    );
+
+    return res.status(201).json({
+      message: 'Question issue reported successfully',
+      report: created.rows[0]
+    });
+  } catch (error) {
+    console.error('Error reporting question issue:', error);
+    return res.status(500).json({ message: 'Error reporting question issue' });
+  }
+};
+
+export const getTestQuestionReports = async (req: Request, res: Response) => {
+  try {
+    const { testId } = req.params;
+    const userId = (req as any).user?.id;
+    const role = (req as any).user?.role;
+
+    const testAccessResult = await pool.query(
+      `SELECT id, teacher_id
+       FROM tests
+       WHERE id = $1
+       LIMIT 1`,
+      [Number(testId)]
+    );
+
+    if (testAccessResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    if (role !== 'admin' && Number(testAccessResult.rows[0].teacher_id) !== Number(userId)) {
+      return res.status(403).json({ message: 'Not allowed to view reports for this test' });
+    }
+
+    const reportsResult = await pool.query(
+      `SELECT r.id,
+              r.test_id as "testId",
+              r.question_id as "questionId",
+              r.student_id as "studentId",
+              r.issue_type as "issueType",
+              r.comment,
+              r.status,
+              r.resolution_note as "resolutionNote",
+              r.resolved_by as "resolvedBy",
+              r.resolved_at as "resolvedAt",
+              r.created_at as "createdAt",
+              r.updated_at as "updatedAt",
+              tq.question_number as "questionNumber",
+              tq.question_text as "questionText",
+              u.first_name as "studentFirstName",
+              u.last_name as "studentLastName",
+              u.email as "studentEmail"
+       FROM test_question_reports r
+       JOIN test_questions tq ON tq.id = r.question_id
+       JOIN users u ON u.id = r.student_id
+       WHERE r.test_id = $1
+       ORDER BY
+         CASE r.status
+           WHEN 'open' THEN 0
+           WHEN 'resolved' THEN 1
+           ELSE 2
+         END,
+         r.created_at DESC`,
+      [Number(testId)]
+    );
+
+    return res.json({ reports: reportsResult.rows });
+  } catch (error) {
+    console.error('Error fetching test question reports:', error);
+    return res.status(500).json({ message: 'Error fetching question reports' });
+  }
+};
+
+export const updateQuestionReportStatus = async (req: Request, res: Response) => {
+  try {
+    const { testId, reportId } = req.params;
+    const { status, resolutionNote } = req.body;
+    const userId = (req as any).user?.id;
+    const role = (req as any).user?.role;
+
+    const normalizedStatus = String(status || '').trim();
+    if (!['open', 'resolved', 'ignored'].includes(normalizedStatus)) {
+      return res.status(400).json({ message: 'Invalid report status' });
+    }
+
+    const testAccessResult = await pool.query(
+      `SELECT id, teacher_id
+       FROM tests
+       WHERE id = $1
+       LIMIT 1`,
+      [Number(testId)]
+    );
+
+    if (testAccessResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    if (role !== 'admin' && Number(testAccessResult.rows[0].teacher_id) !== Number(userId)) {
+      return res.status(403).json({ message: 'Not allowed to update reports for this test' });
+    }
+
+    const updated = await pool.query(
+      `UPDATE test_question_reports
+       SET status = $1,
+           resolution_note = $2,
+           resolved_by = CASE WHEN $1 IN ('resolved', 'ignored') THEN $3 ELSE NULL END,
+           resolved_at = CASE WHEN $1 IN ('resolved', 'ignored') THEN CURRENT_TIMESTAMP ELSE NULL END,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4 AND test_id = $5
+       RETURNING *`,
+      [
+        normalizedStatus,
+        String(resolutionNote || '').trim() || null,
+        userId,
+        Number(reportId),
+        Number(testId)
+      ]
+    );
+
+    if (updated.rows.length === 0) {
+      return res.status(404).json({ message: 'Report not found for this test' });
+    }
+
+    return res.json({
+      message: 'Report status updated successfully',
+      report: updated.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating question report status:', error);
+    return res.status(500).json({ message: 'Error updating report status' });
   }
 };
 

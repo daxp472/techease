@@ -12,6 +12,9 @@ import {
   getStudentTestProgress,
   getStudentTestResults,
   getTestAnalytics,
+  reportQuestionIssue,
+  getTestQuestionReports,
+  updateQuestionReportStatus,
   generateQuizFromPDF
 } from '../controllers/testController';
 import { authenticate, authorize } from '../middleware/auth';
@@ -29,6 +32,9 @@ router.get('/:testId', authenticate, getTest);
 router.get('/:testId/progress', authenticate, authorize('student', 'admin'), getStudentTestProgress);
 router.post('/:testId/save', authenticate, authorize('student', 'admin'), saveTestProgress);
 router.post('/:testId/submit', authenticate, authorize('student', 'admin'), submitTestAnswers);
+router.post('/:testId/questions/:questionId/report', authenticate, authorize('student'), reportQuestionIssue);
+router.get('/:testId/question-reports', authenticate, authorize('teacher', 'admin'), getTestQuestionReports);
+router.put('/:testId/question-reports/:reportId', authenticate, authorize('teacher', 'admin'), updateQuestionReportStatus);
 router.get('/:testId/results', authenticate, authorize('student', 'teacher', 'admin'), getStudentTestResults);
 router.get('/:testId/analytics', authenticate, authorize('teacher', 'admin'), getTestAnalytics);
 
