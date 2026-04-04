@@ -279,6 +279,33 @@ const Dashboard: React.FC = () => {
     }
   ];
 
+  const attendanceGap = Math.max((stats.todaysClasses || 0) - (stats.attendanceMarkedToday || 0), 0);
+  const workflowSteps = [
+    {
+      id: 'attendance',
+      label: 'Mark attendance for all classes',
+      done: attendanceGap === 0,
+      hint: attendanceGap === 0 ? 'Done for today' : `${attendanceGap} classes pending`,
+      href: '/attendance'
+    },
+    {
+      id: 'grading',
+      label: 'Complete key grading updates',
+      done: (stats.averageGrade || 0) > 0,
+      hint: (stats.averageGrade || 0) > 0 ? `Current class avg ${Math.round(stats.averageGrade || 0)}%` : 'No grading trend yet',
+      href: '/grades'
+    },
+    {
+      id: 'intervention',
+      label: 'Review intervention candidates',
+      done: attentionStudents.length === 0,
+      hint: attentionStudents.length === 0 ? 'No at-risk alerts' : `${attentionStudents.length} students need attention`,
+      href: '/analytics'
+    }
+  ];
+  const completedWorkflowSteps = workflowSteps.filter((step) => step.done).length;
+  const workflowProgress = Math.round((completedWorkflowSteps / workflowSteps.length) * 100);
+
   return (
     <Layout>
       <div>
@@ -417,6 +444,39 @@ const Dashboard: React.FC = () => {
                   Tip: mark attendance right after each session to keep analytics accurate.
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {isStaff && (
+          <div className="mb-8 soft-card p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Teacher Workflow Assistant</h2>
+                <p className="text-sm text-slate-600">Daily step-by-step workflow to reduce admin load and keep data complete.</p>
+              </div>
+              <span className="premium-pill">{workflowProgress}% complete</span>
+            </div>
+
+            <div className="mb-4 h-2 rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${workflowProgress}%` }} />
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {workflowSteps.map((step) => (
+                <Link
+                  key={step.id}
+                  to={step.href}
+                  className={`rounded-2xl border p-4 transition-all hover:-translate-y-0.5 hover:shadow-sm ${
+                    step.done
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-brand-50'
+                  }`}
+                >
+                  <p className="text-sm font-semibold text-slate-900">{step.label}</p>
+                  <p className="mt-1 text-xs text-slate-600">{step.hint}</p>
+                </Link>
+              ))}
             </div>
           </div>
         )}
