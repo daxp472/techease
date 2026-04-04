@@ -281,6 +281,23 @@ CREATE TABLE IF NOT EXISTS test_answers (
   UNIQUE(submission_id, question_id)
 );
 
+-- Student-reported question issues during tests
+CREATE TABLE IF NOT EXISTS test_question_reports (
+  id SERIAL PRIMARY KEY,
+  test_id INTEGER REFERENCES tests(id) ON DELETE CASCADE,
+  question_id INTEGER REFERENCES test_questions(id) ON DELETE CASCADE,
+  student_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  submission_id INTEGER REFERENCES test_submissions(id) ON DELETE SET NULL,
+  issue_type VARCHAR(50) NOT NULL CHECK (issue_type IN ('wrong_question', 'incorrect_answer', 'option_issue', 'unclear', 'typo', 'other')),
+  comment TEXT,
+  status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'ignored')),
+  resolution_note TEXT,
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
@@ -304,6 +321,9 @@ CREATE INDEX IF NOT EXISTS idx_tests_status ON tests(status);
 CREATE INDEX IF NOT EXISTS idx_test_questions_test ON test_questions(test_id);
 CREATE INDEX IF NOT EXISTS idx_test_submissions_student ON test_submissions(student_id);
 CREATE INDEX IF NOT EXISTS idx_test_answers_submission ON test_answers(submission_id);
+CREATE INDEX IF NOT EXISTS idx_test_question_reports_test ON test_question_reports(test_id);
+CREATE INDEX IF NOT EXISTS idx_test_question_reports_question ON test_question_reports(question_id);
+CREATE INDEX IF NOT EXISTS idx_test_question_reports_status ON test_question_reports(status);
 
 -- Insert default exam types
 INSERT INTO exam_types (name, description, weightage) VALUES

@@ -73,6 +73,21 @@ interface TestSubmissionRow {
   }>;
 }
 
+interface QuestionReportRow {
+  id: number;
+  questionId: number;
+  questionNumber: number;
+  questionText: string;
+  studentId: number;
+  studentFirstName?: string;
+  studentLastName?: string;
+  issueType: 'wrong_question' | 'incorrect_answer' | 'option_issue' | 'unclear' | 'typo' | 'other';
+  comment?: string;
+  status: 'open' | 'resolved' | 'ignored';
+  resolutionNote?: string;
+  createdAt?: string;
+}
+
 interface StudentResultState {
   test: any;
   submission: {
@@ -208,6 +223,8 @@ const Tests: React.FC = () => {
   const [studentResult, setStudentResult] = useState<StudentResultState | null>(null);
   const [testResults, setTestResults] = useState<{ summary?: any; submissions?: TestSubmissionRow[]; questions?: any[] } | null>(null);
   const [testAnalytics, setTestAnalytics] = useState<any | null>(null);
+  const [questionReports, setQuestionReports] = useState<QuestionReportRow[]>([]);
+  const [reportActionLoadingId, setReportActionLoadingId] = useState<number | null>(null);
   const [reviewTest, setReviewTest] = useState<any | null>(null);
   const [reviewQuestions, setReviewQuestions] = useState<ReviewQuestion[]>([]);
   const [reviewSchedule, setReviewSchedule] = useState({
@@ -353,6 +370,20 @@ const Tests: React.FC = () => {
     const validQuestions = questionDrafts.filter((question) => question.questionText.trim());
     if (validQuestions.length === 0) {
       showToast('Add question text before saving', 'error');
+      return;
+    }
+
+    const invalidMcq = validQuestions.find((question) => {
+      if (question.questionType !== 'mcq') {
+        return false;
+      }
+      const populatedOptions = question.options.filter((option) => option.optionText.trim());
+      const correctCount = populatedOptions.filter((option) => option.isCorrect).length;
+      return populatedOptions.length < 2 || correctCount < 1;
+    });
+
+    if (invalidMcq) {
+      showToast('Each MCQ needs at least two options and one correct answer', 'error');
       return;
     }
 
@@ -537,15 +568,17 @@ const Tests: React.FC = () => {
     setDetailLoading(true);
     setResultsLoading(true);
     try {
-      const [detailResponse, resultsResponse, analyticsResponse] = await Promise.all([
+      const [detailResponse, resultsResponse, analyticsResponse, reportsResponse] = await Promise.all([
         testAPI.getById(testId),
         user?.role === 'student' ? Promise.resolve(null) : testAPI.getResults(testId),
-        user?.role === 'student' ? Promise.resolve(null) : testAPI.getAnalytics(testId)
+        user?.role === 'student' ? Promise.resolve(null) : testAPI.getAnalytics(testId),
+        user?.role === 'student' ? Promise.resolve(null) : testAPI.getQuestionReports(testId)
       ]);
 
       setSelectedTest(normalizeTestDetails(detailResponse.data.test));
       setTestResults(resultsResponse?.data || null);
       setTestAnalytics(analyticsResponse?.data || null);
+      setQuestionReports(Array.isArray(reportsResponse?.data?.reports) ? reportsResponse?.data?.reports : []);
     } catch {
       showToast('Unable to load test details', 'error');
     } finally {
@@ -664,11 +697,42 @@ const Tests: React.FC = () => {
     setSelectedTest(null);
   };
 
+  const updateReportStatus = async (reportId: number, status: 'open' | 'resolved' | 'ignored') => {
+    if (!selectedTest) return;
+
+    setReportActionLoadingId(reportId);
+    try {
+      await testAPI.updateQuestionReportStatus(selectedTest.id, reportId, { status });
+      setQuestionReports((current) => current.map((report) => (
+        report.id === reportId ? { ...report, status } : report
+      )));
+      showToast('Question report updated', 'success');
+    } catch {
+      showToast('Unable to update question report status', 'error');
+    } finally {
+      setReportActionLoadingId(null);
+    }
+  };
+
   const publishReviewTest = async () => {
     if (!reviewTest) return;
     const validQuestions = reviewQuestions.filter((question) => question.questionText.trim());
     if (validQuestions.length === 0) {
       showToast('Add at least one valid question before publishing', 'error');
+      return;
+    }
+
+    const invalidMcq = validQuestions.find((question) => {
+      if (question.questionType !== 'mcq') {
+        return false;
+      }
+      const populatedOptions = question.options.filter((option) => option.optionText.trim());
+      const correctCount = populatedOptions.filter((option) => option.isCorrect).length;
+      return populatedOptions.length < 2 || correctCount < 1;
+    });
+
+    if (invalidMcq) {
+      showToast('Each MCQ needs at least two options and one correct answer', 'error');
       return;
     }
 
@@ -1034,6 +1098,78 @@ const Tests: React.FC = () => {
                         </div>
                       </div>
 
+                      <div className="rounded-2xl border border-slate-200 p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                          <h3 className="text-lg font-semibold text-slate-900">Flagged Questions By Students</h3>
+                          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                            {questionReports.filter((report) => report.status === 'open').length} Open
+                          </span>
+                        </div>
+
+                        {questionReports.length === 0 ? (
+                          <p className="text-sm text-slate-600">No question issues have been reported yet.</p>
+                        ) : (
+                          <div className="space-y-3">
+                            {questionReports.map((report) => (
+                              <div key={report.id} className="rounded-xl border border-slate-200 p-3">
+                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                  <div>
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      Q{report.questionNumber}: {report.questionText}
+                                    </p>
+                                    <p className="text-xs text-slate-500">
+                                      Reported by {report.studentFirstName || 'Student'} {report.studentLastName || ''}
+                                      {report.createdAt ? ` • ${new Date(report.createdAt).toLocaleString()}` : ''}
+                                    </p>
+                                  </div>
+                                  <span className={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${
+                                    report.status === 'open'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : report.status === 'resolved'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-slate-100 text-slate-700'
+                                  }`}>
+                                    {report.status}
+                                  </span>
+                                </div>
+
+                                <p className="mt-2 text-sm text-slate-700">
+                                  <span className="font-medium">Issue:</span> {String(report.issueType).replace(/_/g, ' ')}
+                                  {report.comment ? ` - ${report.comment}` : ''}
+                                </p>
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    disabled={reportActionLoadingId === report.id}
+                                    onClick={() => void updateReportStatus(report.id, 'open')}
+                                  >
+                                    Reopen
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    disabled={reportActionLoadingId === report.id}
+                                    onClick={() => void updateReportStatus(report.id, 'ignored')}
+                                  >
+                                    Ignore
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-primary"
+                                    disabled={reportActionLoadingId === report.id}
+                                    onClick={() => void updateReportStatus(report.id, 'resolved')}
+                                  >
+                                    Mark Resolved
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
                       {resultsLoading ? (
                         <LoadingState compact message="Loading test results..." />
                       ) : (
@@ -1180,15 +1316,19 @@ const Tests: React.FC = () => {
                           <option value="hard">Hard</option>
                         </select>
                         <input className="input-base" type="number" min={1} value={question.points} onChange={(e) => updateDraftQuestion(questionIndex, { points: Number(e.target.value) })} placeholder="Points" />
-                        <input className="input-base" value={question.correctAnswer} onChange={(e) => updateDraftQuestion(questionIndex, { correctAnswer: e.target.value })} placeholder="Correct answer" />
+                        {question.questionType !== 'mcq' ? (
+                          <input className="input-base" value={question.correctAnswer} onChange={(e) => updateDraftQuestion(questionIndex, { correctAnswer: e.target.value })} placeholder="Correct answer" />
+                        ) : <div className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">Use checkboxes below for correct options</div>}
                       </div>
 
                       {question.questionType === 'mcq' && (
                         <div className="grid grid-cols-1 gap-2">
                           {question.options.map((option, optionIndex) => (
                             <div key={option.optionNumber} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2">
-                              <input type="radio" name={`correct-${questionIndex}`} checked={option.isCorrect} onChange={() => {
-                                const updatedOptions = question.options.map((item, itemIndex) => ({ ...item, isCorrect: itemIndex === optionIndex }));
+                              <input type="checkbox" checked={option.isCorrect} onChange={(event) => {
+                                const updatedOptions = question.options.map((item, itemIndex) => itemIndex === optionIndex
+                                  ? { ...item, isCorrect: event.target.checked }
+                                  : item);
                                 updateDraftQuestion(questionIndex, { options: updatedOptions });
                               }} />
                               <input className="input-base flex-1" value={option.optionText} onChange={(e) => updateDraftOption(questionIndex, optionIndex, { optionText: e.target.value })} placeholder={`Option ${option.optionNumber}`} />
@@ -1402,7 +1542,9 @@ const Tests: React.FC = () => {
                                 <option value="hard">Hard</option>
                               </select>
                               <input className="input-base" type="number" min={1} value={question.points} onChange={(event) => updateReviewQuestion(questionIndex, { points: Number(event.target.value) })} />
-                              <input className="input-base" value={question.correctAnswer} onChange={(event) => updateReviewQuestion(questionIndex, { correctAnswer: event.target.value })} placeholder="Correct answer" />
+                              {question.questionType !== 'mcq' ? (
+                                <input className="input-base" value={question.correctAnswer} onChange={(event) => updateReviewQuestion(questionIndex, { correctAnswer: event.target.value })} placeholder="Correct answer" />
+                              ) : <div className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">Use checkboxes below for correct options</div>}
                             </div>
 
                             {question.questionType === 'mcq' ? (
@@ -1410,13 +1552,12 @@ const Tests: React.FC = () => {
                                 {question.options.map((option: any, optionIndex: number) => (
                                   <div key={`${questionIndex}-${optionIndex}`} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2">
                                     <input
-                                      type="radio"
-                                      name={`review-correct-${questionIndex}`}
+                                      type="checkbox"
                                       checked={option.isCorrect}
-                                      onChange={() => {
+                                      onChange={(event) => {
                                         const updatedOptions = question.options.map((item: any, currentIndex: number) => ({
                                           ...item,
-                                          isCorrect: currentIndex === optionIndex
+                                          isCorrect: currentIndex === optionIndex ? event.target.checked : item.isCorrect
                                         }));
                                         updateReviewQuestion(questionIndex, { options: updatedOptions });
                                       }}

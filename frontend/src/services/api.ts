@@ -134,6 +134,11 @@ export const testAPI = {
   getProgress: (testId: number) => api.get(`/tests/${testId}/progress`),
   saveProgress: (testId: number, data: any) => api.post(`/tests/${testId}/save`, data),
   submit: (testId: number, data: any) => api.post(`/tests/${testId}/submit`, data),
+  reportQuestionIssue: (testId: number, questionId: number, data: { issueType: string; comment?: string }) =>
+    api.post(`/tests/${testId}/questions/${questionId}/report`, data),
+  getQuestionReports: (testId: number) => api.get(`/tests/${testId}/question-reports`),
+  updateQuestionReportStatus: (testId: number, reportId: number, data: { status: 'open' | 'resolved' | 'ignored'; resolutionNote?: string }) =>
+    api.put(`/tests/${testId}/question-reports/${reportId}`, data),
   getResults: (testId: number) => api.get(`/tests/${testId}/results`),
   getAnalytics: (testId: number) => api.get(`/tests/${testId}/analytics`),
 };

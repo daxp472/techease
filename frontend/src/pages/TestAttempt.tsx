@@ -19,9 +19,42 @@ interface TestQuestionItem {
   questionNumber: number;
   questionText: string;
   questionType: 'mcq' | 'short_answer' | 'long_answer' | 'true_false';
+  allowsMultiple?: boolean;
   points?: number;
   options?: OptionItem[];
 }
+
+const parseStoredAnswer = (value: any): string | number | number[] => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => Number(item))
+      .filter((item) => Number.isFinite(item));
+  }
+
+  const text = String(value).trim();
+  if (!text) {
+    return '';
+  }
+
+  if (text.startsWith('[') && text.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => Number(item))
+          .filter((item) => Number.isFinite(item));
+      }
+    } catch {
+      return text;
+    }
+  }
+
+  return text;
+};
 
 const TestAttempt: React.FC = () => {
   const { id } = useParams();
@@ -30,7 +63,11 @@ const TestAttempt: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [test, setTest] = useState<{ id: number; title: string; description?: string; duration_minutes?: number; questions?: TestQuestionItem[] } | null>(null);
-  const [answers, setAnswers] = useState<Record<number, string | number>>({});
+  const [answers, setAnswers] = useState<Record<number, string | number | number[]>>({});
+  const [reportingQuestion, setReportingQuestion] = useState<TestQuestionItem | null>(null);
+  const [reportIssueType, setReportIssueType] = useState('incorrect_answer');
+  const [reportComment, setReportComment] = useState('');
+  const [reporting, setReporting] = useState(false);
 
   useEffect(() => {
     const fetchTest = async () => {
@@ -47,6 +84,7 @@ const TestAttempt: React.FC = () => {
           questionNumber: Number(question.questionNumber ?? question.question_number),
           questionText: question.questionText ?? question.question_text ?? '',
           questionType: question.questionType ?? question.question_type,
+          allowsMultiple: Boolean(question.allowsMultiple ?? question.allows_multiple),
           points: Number(question.points ?? 1),
           options: Array.isArray(question.options)
             ? question.options.filter((option: any) => option && (option.optionText ?? option.option_text)).map((option: any) => ({
@@ -64,9 +102,9 @@ const TestAttempt: React.FC = () => {
         });
 
         const savedAnswers = Array.isArray(progressResponse.data?.answers)
-          ? progressResponse.data.answers.reduce((acc: Record<number, string | number>, item: any) => {
+          ? progressResponse.data.answers.reduce((acc: Record<number, string | number | number[]>, item: any) => {
               if (item?.questionId !== undefined) {
-                acc[Number(item.questionId)] = item.answer ?? '';
+                acc[Number(item.questionId)] = parseStoredAnswer(item.answer);
               }
               return acc;
             }, {})
@@ -91,6 +129,9 @@ const TestAttempt: React.FC = () => {
 
     const hasUnanswered = questions.some((question) => {
       const answer = answers[question.id];
+      if (Array.isArray(answer)) {
+        return answer.length === 0;
+      }
       return answer === undefined || answer === null || String(answer).trim() === '';
     });
 
@@ -114,6 +155,37 @@ const TestAttempt: React.FC = () => {
       showToast('Unable to submit test', 'error');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const toggleMultiSelectAnswer = (questionId: number, optionValue: number) => {
+    const existing = Array.isArray(answers[questionId]) ? answers[questionId] as number[] : [];
+    const next = existing.includes(optionValue)
+      ? existing.filter((value) => value !== optionValue)
+      : [...existing, optionValue];
+
+    setAnswers({ ...answers, [questionId]: next });
+  };
+
+  const submitQuestionReport = async () => {
+    if (!id || !reportingQuestion) {
+      return;
+    }
+
+    setReporting(true);
+    try {
+      await testAPI.reportQuestionIssue(Number(id), reportingQuestion.id, {
+        issueType: reportIssueType,
+        comment: reportComment.trim() || undefined
+      });
+      showToast('Question has been flagged for teacher review.', 'success');
+      setReportingQuestion(null);
+      setReportIssueType('incorrect_answer');
+      setReportComment('');
+    } catch {
+      showToast('Unable to report this question right now.', 'error');
+    } finally {
+      setReporting(false);
     }
   };
 
@@ -149,24 +221,56 @@ const TestAttempt: React.FC = () => {
                     {question.options.map((option, index) => (
                       <label key={option.id || option.optionNumber || index} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 hover:bg-slate-50">
                         <input
-                          type="radio"
+                          type={question.allowsMultiple ? 'checkbox' : 'radio'}
                           name={`question-${question.id}`}
                           value={option.id ?? option.optionNumber ?? option.optionText}
-                          checked={String(answers[question.id] ?? '') === String(option.id ?? option.optionNumber ?? option.optionText)}
-                          onChange={() => setAnswers({ ...answers, [question.id]: option.id ?? option.optionNumber ?? option.optionText })}
+                          checked={question.allowsMultiple
+                            ? Array.isArray(answers[question.id]) && (answers[question.id] as number[]).includes(Number(option.id ?? option.optionNumber))
+                            : String(answers[question.id] ?? '') === String(option.id ?? option.optionNumber ?? option.optionText)}
+                          onChange={() => {
+                            const answerValue = Number(option.id ?? option.optionNumber ?? 0);
+                            if (question.allowsMultiple) {
+                              if (Number.isFinite(answerValue) && answerValue > 0) {
+                                toggleMultiSelectAnswer(question.id, answerValue);
+                              }
+                              return;
+                            }
+
+                            setAnswers({ ...answers, [question.id]: option.id ?? option.optionNumber ?? option.optionText });
+                          }}
                         />
                         <span className="text-sm text-slate-800">{option.optionText}</span>
                       </label>
                     ))}
+                    {question.allowsMultiple ? (
+                      <p className="text-xs text-slate-500">This question has multiple correct options. Select all that apply.</p>
+                    ) : null}
                   </div>
                 ) : (
                   <textarea
                     className="input-base min-h-[120px]"
                     placeholder="Type your answer here"
-                    value={answers[question.id] || ''}
+                    value={(() => {
+                      const currentAnswer = answers[question.id];
+                      return Array.isArray(currentAnswer) ? '' : (currentAnswer ?? '');
+                    })()}
                     onChange={(event) => setAnswers({ ...answers, [question.id]: event.target.value })}
                   />
                 )}
+
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setReportingQuestion(question);
+                      setReportIssueType('incorrect_answer');
+                      setReportComment('');
+                    }}
+                  >
+                    Report Question Issue
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -177,6 +281,45 @@ const TestAttempt: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {reportingQuestion ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+            <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Report Question</p>
+                  <h3 className="mt-1 text-lg font-bold text-slate-900">Question {reportingQuestion.questionNumber}</h3>
+                  <p className="mt-1 text-sm text-slate-600">Tell your teacher what looks wrong so they can review it.</p>
+                </div>
+                <button type="button" className="btn-secondary" onClick={() => setReportingQuestion(null)}>Close</button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <select className="input-base" value={reportIssueType} onChange={(event) => setReportIssueType(event.target.value)}>
+                  <option value="incorrect_answer">Correct answer is wrong</option>
+                  <option value="wrong_question">Question is wrong</option>
+                  <option value="option_issue">Options are wrong/confusing</option>
+                  <option value="unclear">Question is unclear</option>
+                  <option value="typo">Typo/grammar issue</option>
+                  <option value="other">Other issue</option>
+                </select>
+                <textarea
+                  className="input-base min-h-[120px]"
+                  placeholder="Optional note for your teacher"
+                  value={reportComment}
+                  onChange={(event) => setReportComment(event.target.value)}
+                />
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" className="btn-secondary" onClick={() => setReportingQuestion(null)} disabled={reporting}>Cancel</button>
+                <button type="button" className="btn-primary" onClick={() => void submitQuestionReport()} disabled={reporting}>
+                  {reporting ? 'Reporting...' : 'Submit Report'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </Layout>
   );
